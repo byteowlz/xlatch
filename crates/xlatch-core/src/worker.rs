@@ -96,6 +96,8 @@ async fn execute(dir: &Path, job: &Job, manifest: &Manifest) -> Result<Value> {
     );
     let result = match &manifest.execution {
         Execution::Echo => job.input.clone(),
+        Execution::SaveFile { directory } => crate::save_file::save(directory, &job.input)?,
+
         Execution::Command {
             program,
             args,

@@ -36,6 +36,11 @@ pub struct Manifest {
 pub enum Execution {
     /// Return the submitted JSON without side effects.
     Echo,
+    /// Save shared content within a fixed, operator-approved directory.
+    SaveFile {
+        /// Canonical absolute directory; never supplied by the mobile request.
+        directory: String,
+    },
     /// Run an approved absolute program with fixed arguments and JSON on stdin.
     Command {
         /// Absolute executable path.
@@ -83,6 +88,16 @@ impl Manifest {
         );
         validate_schema(&self.input_schema)?;
         validate_schema(&self.output_schema)?;
+        if let Execution::SaveFile { directory } = &self.execution {
+            ensure!(
+                std::path::Path::new(directory).is_absolute(),
+                "save destination must be absolute"
+            );
+            ensure!(
+                std::fs::canonicalize(directory)? == std::path::Path::new(directory),
+                "save destination must be canonical"
+            );
+        }
         if let Execution::Command {
             program,
             args,

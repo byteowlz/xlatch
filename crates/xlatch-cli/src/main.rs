@@ -1,5 +1,6 @@
 //! Local operator CLI for `CrossLatch`.
 
+mod destination;
 mod network;
 mod pairing;
 mod server;
@@ -35,6 +36,11 @@ enum Command {
     Service {
         #[command(subcommand)]
         command: service_install::Command,
+    },
+    /// Configure server-side save destinations.
+    Destination {
+        #[command(subcommand)]
+        command: destination::Command,
     },
     /// Submit a manifest for approval.
     Register { manifest: PathBuf },
@@ -113,6 +119,19 @@ async fn main() -> Result<()> {
     let control = match cli.command {
         Command::Service { command } => {
             return service_install::dispatch(data_dir, command).await;
+        }
+        Command::Destination {
+            command:
+                destination::Command::Add {
+                    name,
+                    directory,
+                    device,
+                },
+        } => {
+            let capability =
+                destination::add(&data_dir, &name, directory, device.as_deref()).await?;
+            println!("{}", serde_json::to_string_pretty(&capability)?);
+            return Ok(());
         }
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "xlatch", &mut std::io::stdout());

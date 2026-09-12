@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use xlatch_core::{
-    capability::{Manifest, Request},
+    capability::Request,
     local::{self, Control},
 };
 
@@ -30,7 +30,7 @@ pub async fn run(
         let code = qrcode::QrCode::new(encoded.as_bytes())?;
         // Explicit colors keep the QR readable on both light and dark terminal themes.
         let rendered = code.render::<qrcode::render::unicode::Dense1x2>().build();
-        println!("\nScan in CrossLatch → Server → Scan QR. Expires in five minutes.\n");
+        println!("\nScan in xlatch → Server → Scan QR. Expires in five minutes.\n");
         for line in rendered.lines() {
             println!("\x1b[30;47m{line}\x1b[0m");
         }
@@ -68,45 +68,62 @@ async fn select_capabilities(dir: &Path) -> Result<Vec<String>> {
             entries.is_empty(),
             "No approved actions. Review and approve a pending manifest before pairing."
         );
-        println!(
-            "No actions yet. The test action returns the text or file you share, without running a command."
-        );
+        let destination =
+            xlatch_core::paths::expand_path(std::path::Path::new("~/xlatch/incoming"))?;
+        let answer = prompt(&format!(
+            "Add Save to server ({}) and allow this phone to use it? [Y/n] ",
+            destination.display()
+        ))?;
         ensure!(
-            prompt("Create, approve and grant this test action? [y/N] ")?.eq_ignore_ascii_case("y"),
+            answer.is_empty()
+                || answer.eq_ignore_ascii_case("y")
+                || answer.eq_ignore_ascii_case("yes"),
             "pairing cancelled"
         );
-        let manifest: Manifest =
-            serde_json::from_str(include_str!("../../../examples/capabilities/echo.json"))?;
-        let revision = manifest.revision()?;
-        let id = manifest.id.clone();
-        local::call(dir, Control::Register { manifest }).await?;
-        local::call(
-            dir,
-            Control::Approve {
-                id: id.clone(),
-                revision,
-                allow_host_execution: false,
-            },
-        )
-        .await?;
-        return Ok(vec![id]);
+        let capability = crate::destination::add(dir, "incoming", Some(destination), None).await?;
+        return Ok(vec![capability.manifest.id]);
+    }
+    if active.len() == 1 {
+        let entry = active[0];
+        let id = entry["manifest"]["id"].as_str().context("missing ID")?;
+        let title = entry["manifest"]["title"]
+            .as_str()
+            .context("missing title")?;
+        let answer = prompt(&format!("Allow this phone to use {title} ({id})? [Y/n] "))?;
+        ensure!(
+            answer.is_empty()
+                || answer.eq_ignore_ascii_case("y")
+                || answer.eq_ignore_ascii_case("yes"),
+            "pairing cancelled"
+        );
+        return Ok(vec![id.to_owned()]);
     }
     println!("Choose the actions this phone may invoke:");
-    for entry in &active {
+    for (index, entry) in active.iter().enumerate() {
         println!(
-            "  {} — {}",
-            entry["manifest"]["id"].as_str().context("missing ID")?,
+            "  {}. {} ({})",
+            index + 1,
             entry["manifest"]["title"]
                 .as_str()
-                .context("missing title")?
+                .context("missing title")?,
+            entry["manifest"]["id"].as_str().context("missing ID")?
         );
     }
-    let answer = prompt("Capability IDs (comma-separated): ")?;
+    let answer = prompt("Action numbers or IDs (comma-separated): ")?;
     let selected: Vec<String> = answer
         .split(',')
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .map(str::to_owned)
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .ok()
+                .and_then(|number| number.checked_sub(1))
+                .and_then(|index| active.get(index))
+                .and_then(|entry| entry["manifest"]["id"].as_str())
+                .unwrap_or(value)
+                .to_owned()
+        })
         .collect();
     ensure!(!selected.is_empty(), "pairing cancelled");
     ensure!(
@@ -122,6 +139,6 @@ fn prompt(message: &str) -> Result<String> {
     print!("{message}");
     io::stdout().flush()?;
     let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
+    ensure!(io::stdin().read_line(&mut answer)? > 0, "pairing cancelled");
     Ok(answer.trim().to_owned())
 }

@@ -101,7 +101,8 @@ impl Store {
             "revision changed; review again"
         );
         ensure!(
-            matches!(capability.manifest.execution, Execution::Echo) || allow_host_execution,
+            !matches!(capability.manifest.execution, Execution::Command { .. })
+                || allow_host_execution,
             "command executes with the daemon user's privileges; approval requires --allow-host-execution"
         );
         capability.manifest.validate()?;

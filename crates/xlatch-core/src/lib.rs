@@ -3,6 +3,7 @@
 pub mod config;
 pub mod error;
 pub mod paths;
+mod save_file;
 pub mod schema;
 
 pub use config::{AppConfig, LogLevel, LoggingConfig, PathsConfig, RuntimeConfig};
