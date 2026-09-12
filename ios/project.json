@@ -52,7 +52,9 @@
             "UIInterfaceOrientationPortrait",
             "UIInterfaceOrientationLandscapeLeft",
             "UIInterfaceOrientationLandscapeRight"
-          ]
+          ],
+          "NSFaceIDUsageDescription": "Use Face ID to sign device enrollment approvals.",
+          "XLatchApprovalKeychainGroup": "$(AppIdentifierPrefix)com.byteowlz.xlatch.approval"
         }
       },
       "entitlements": {
@@ -62,7 +64,8 @@
             "group.com.byteowlz.xlatch"
           ],
           "keychain-access-groups": [
-            "$(AppIdentifierPrefix)com.byteowlz.xlatch.shared"
+            "$(AppIdentifierPrefix)com.byteowlz.xlatch.shared",
+            "$(AppIdentifierPrefix)com.byteowlz.xlatch.approval"
           ]
         }
       },

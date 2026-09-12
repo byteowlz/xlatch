@@ -27,6 +27,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan a pairing code from your xlatch server.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to sign device enrollment approvals.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your paired xlatch server to send actions and retrieve results.</string>
 	<key>UIApplicationSceneManifest</key>
@@ -42,6 +44,8 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>XLatchApprovalKeychainGroup</key>
+	<string>$(AppIdentifierPrefix)com.byteowlz.xlatch.approval</string>
 	<key>XLatchKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)com.byteowlz.xlatch.shared</string>
 </dict>

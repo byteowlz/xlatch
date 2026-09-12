@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 import OSLog
 
 @MainActor final class AppModel: ObservableObject {
+    @Published var enrollmentStatus: EnrollmentStatus?
+    @Published var pendingEnrollments: [PendingEnrollment] = []
+    @Published var ownPendingEnrollment: PendingEnrollment?
     @Published var connection: Connection?
     @Published var capabilities: [Capability] = []
     @Published var jobs: [Job] = []
@@ -32,6 +35,7 @@ import OSLog
         refreshing = true; defer { refreshing = false }
         do {
             let client = try client()
+            guard try await refreshEnrollment(using: client) else { return }
             capabilities = try await client.capabilities()
             let recent: [Job] = try await client.rpc(["op": "jobs"])
             let previous = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0.status) })
@@ -47,12 +51,13 @@ import OSLog
     }
     func pair(_ ticket: PairingTicket) async throws {
         connection = try await APIClient.pair(ticket, name: UIDevice.current.name)
+        enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil
         capabilities = []; jobs = []; activeServerURL = nil
         if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }
         await refresh()
     }
     func disconnect() {
-        do { try CredentialStore.clear(); connection = nil; capabilities = []; jobs = []; activeServerURL = nil; lastUpdated = nil; error = nil }
+        do { try CredentialStore.clear(); connection = nil; enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = []; jobs = []; activeServerURL = nil; lastUpdated = nil; error = nil }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -64,6 +69,7 @@ import OSLog
         WindowGroup {
             Group {
                 if model.connection == nil { PairView() }
+                else if let status = model.enrollmentStatus, status.device_status != "active" { PendingEnrollmentView() }
                 else {
                     TabView {
                         ActionsView().tabItem { Label("Actions", systemImage: "bolt") }
@@ -120,7 +126,7 @@ struct PairView: View {
                     HStack { if busy { ProgressView() }; Label(busy ? "Connecting…" : "Scan pairing code", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity) }.padding(.vertical, 8)
                 }.buttonStyle(.borderedProminent).disabled(busy)
                 Button("Paste pairing code") { manual = true }.frame(maxWidth: .infinity).disabled(busy)
-                Text("Create a pairing code with xlatch-cli on your server. Codes expire after five minutes.")
+                Text("Create a pairing code with xlatch pair on your server. Codes expire after five minutes.")
                     .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .center)
             }.padding(28).navigationTitle("xlatch").navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $scanning) { QRScanner { value in scanning = false; connect(value) } }
@@ -374,6 +380,7 @@ struct SettingsView: View {
                     Text("This version checks results while the app is open and when you return. Background push notifications are not connected yet.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section { Button("Forget this server", role: .destructive) { confirmDisconnect = true } } footer: { Text("This removes the key from your phone. Use xlatch revoke on the server to revoke the device there too.") }
+                Section { NavigationLink("Device approvals") { EnrollmentSettingsView() } }
             }.navigationTitle("Server").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
         }
     }
