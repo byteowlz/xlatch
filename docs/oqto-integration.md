@@ -1,0 +1,11 @@
+# Oqto integration boundary
+
+Oqto's current glossary distinguishes an Account, an OS Principal, a Service Identity, a Workspace, and a Session. Its Runner is the sole execution interface and its runner-side Gate enforces App capabilities. CrossLatch must preserve those boundaries rather than interpreting access to an address or socket as authority.
+
+The intended integration is a runner-side adapter: Oqto authenticates the operator/service identity, the Gate authorizes the App instance and Workspace resources, and an explicitly scoped xlatch identity submits the approved capability revision. Results and events return through the same ownership scope. An Oqto App can expose these actions through its Host contract; its Bridge remains only transport. The xlatch mobile app can later be embedded or replaced without changing the job model.
+
+Before multi-user integration, add an authenticated principal namespace and explicit `{issuer,subject,workspace_id}` resource scope to grants, jobs, and artifacts. Map Oqto identities through a trusted issuer; never trust client-supplied workspace ids. Keep Oqto Account/Principal distinct from mobile Device. Persist source Session/App provenance as audit metadata, without letting that metadata grant permission. Each Gate request should attenuate authority; a capability cannot increase its caller's allowed resources.
+
+Delegate heavy work to runner-managed executors or approved App Sidecars. Oqto's placement supervisor continues to own runner lifecycle; xlatch must not become a parallel agent/session supervisor or treat a registry entry as an operational worker. Keep scheduling durable in xlatch while placement/execution stays behind a narrow executor seam. Cancellation and result references need an explicit ownership contract across that seam before distributing workers.
+
+The current v0 has typed, revision-bound contracts, owned jobs, durable cursors, and a transport-neutral dispatcher, which are useful foundations. It deliberately does not import Oqto or govnr code. Its local socket and MCP adapter have OS-operator authority and are unsuitable for untrusted Apps; future integration must use scoped credentials through the Gate and an executor that actually enforces filesystem/network/process isolation. A manifest's claim of isolation is not proof of enforcement.

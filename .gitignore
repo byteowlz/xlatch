@@ -1,6 +1,6 @@
 .pi/todos/
 /target
-.env 
+.env
 .DS_Store
 .vscode/
 

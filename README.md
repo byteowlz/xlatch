@@ -1,142 +1,37 @@
-# Rust Workspace Template
+# CrossLatch
 
-A batteries-included Rust workspace template with CLI, TUI, MCP server, and HTTP API crates sharing a common core library.
+Share content from your phone to approved server capabilities. The Rust service provides pinned HTTPS pairing, device grants, typed manifests, durable SQLite jobs, and a private Unix control socket. The native iOS app includes a share extension.
 
-## Quick Start
+## Install and run
 
-Install the latest stable Rust toolchain (`rustup default stable`), then:
-
-```bash
-cargo build
-cargo test
+```sh
+cargo install --path crates/xlatch-cli
+xlatch service run
 ```
 
-Run individual binaries:
+For phone access, supply a reachable LAN or Tailscale origin when first starting the service:
 
-```bash
-cargo run -p xlatch-cli -- run
-cargo run -p xlatch-tui
-cargo run -p xlatch-api -- --port 3000
-cargo run -p xlatch-mcp
+```sh
+xlatch service enable --listen 0.0.0.0:7443 --public-url https://YOUR_SERVER_IP:7443
+xlatch pair
 ```
 
-Scaffold a new project:
+Pairing guides capability selection and prints a terminal QR. An empty registry offers an explicit approval for the built-in content round-trip action. Use `--json` for scripted output or `--qr pair.svg` to export the QR. Application configuration uses JSON or TOML.
 
-```bash
-scripts/new-cli.sh my-app
+## Service lifecycle
+
+```sh
+xlatch service run       # foreground
+xlatch service enable    # install and start at user login
+xlatch service start
+xlatch service stop
+xlatch service restart
+xlatch service status
+xlatch service disable   # stop and disable automatic startup
 ```
 
-```powershell
-pwsh scripts/new-cli.ps1 my-app
-```
+`enable --dry-run` prints the service definition without installing it. Linux uses a systemd user service; macOS uses a launch agent. Run `enable` before controlling an installed service. Linux startup without a login requires user lingering configured separately. Pass the same global `--data-dir` when accessing a service using a custom directory. Changing an existing HTTPS identity's hostname requires explicit certificate migration; set the reachable origin before pairing.
 
-This creates a new workspace with all crates renamed (e.g., `my-app-core`, `my-app-cli`, etc.).
+The source package is `xlatch` in `crates/xlatch-cli`. The separate `xlatch-api` executable has been removed. MCP remains an adapter in `xlatch-mcp`.
 
-## Workspace Structure
-
-```
-crates/
-  xlatch-core/    # Shared library: config, paths, error types
-  xlatch-cli/     # Command-line interface
-  xlatch-tui/     # Terminal user interface (ratatui)
-  xlatch-mcp/     # Model Context Protocol server
-  xlatch-api/     # HTTP API server (axum)
-examples/
-  config.toml   # Example configuration
-scripts/
-  new-cli.sh    # Unix scaffolding script
-  new-cli.ps1   # PowerShell scaffolding script
-```
-
-## Crates
-
-### xlatch-core
-
-Shared library providing:
-- `AppConfig` - Configuration loading via `config` crate
-- `AppPaths` - XDG-compliant path resolution
-- Error types and common utilities
-
-### xlatch-cli
-
-Command-line interface with:
-- Subcommands: `run`, `init`, `config`, `completions`
-- Global flags: `-q`, `-v`, `--debug`, `--trace`, `--json`, `--yaml`, `--no-color`, `--dry-run`, `--yes`
-- Shell completion generation
-
-```bash
-cargo run -p xlatch-cli -- --help
-cargo run -p xlatch-cli -- completions bash > target/xlatch-cli.bash
-```
-
-### xlatch-tui
-
-Terminal UI built with ratatui featuring:
-- Three-pane layout (navigation, list, details)
-- Vim-style navigation (j/k/h/l)
-- Modal help system
-
-```bash
-cargo run -p xlatch-tui
-```
-
-### xlatch-mcp
-
-MCP (Model Context Protocol) server exposing tools:
-- `get_profile` - Current configuration profile
-- `echo` - Echo messages
-- `get_runtime_config` - Runtime configuration
-
-```bash
-cargo run -p xlatch-mcp
-```
-
-### xlatch-api
-
-HTTP API server (axum) with endpoints:
-- `GET /` - Service info
-- `GET /health` - Health check
-- `GET /config` - Current configuration
-
-```bash
-cargo run -p xlatch-api -- --port 3000
-curl http://localhost:3000/health
-```
-
-## Configuration
-
-Default config path: `$XDG_CONFIG_HOME/rust-workspace/config.toml`
-
-Override with `--config <path>` or environment variables using the `RUST_WORKSPACE__` prefix:
-
-```bash
-RUST_WORKSPACE__LOGGING__LEVEL=debug cargo run -p xlatch-cli -- run
-```
-
-See `examples/config.toml` for all options.
-
-## Development
-
-```bash
-cargo fmt                                    # Format code
-cargo clippy --all-targets --all-features   # Lint
-sg scan --config .ast-grep/sgconfig.yml     # ast-grep Rust guardrails
-cargo test                                   # Run tests
-cargo build --release                        # Release build
-```
-
-## Scaffolding
-
-The `scripts/new-cli.sh` (Unix) and `scripts/new-cli.ps1` (PowerShell) scripts create a new project from this template:
-
-```bash
-scripts/new-cli.sh my-app --path ~/projects/my-app
-```
-
-This will:
-1. Copy the template to the destination
-2. Rename all crates from `rust-*` to `my-app-*`
-3. Update all references in Cargo.toml, source files, and documentation
-4. Rename crate directories accordingly
-
-Requirements: `python3` for the shell script, PowerShell 7 for the Windows script.
+See [testing](docs/testing.md), [protocol](docs/protocol.md), and [Oqto integration](docs/oqto-integration.md).
