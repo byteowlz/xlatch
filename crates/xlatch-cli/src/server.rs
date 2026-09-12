@@ -91,7 +91,7 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     }
     if let Some(notifications) = notifications {
         tasks.spawn(notifications.run(data_dir.clone()));
-        eprintln!("Apprise notifications enabled (generic job status only).");
+        eprintln!("External notifications enabled (generic job status only).");
     }
     let handle = axum_server::Handle::new();
     let server = axum_server::from_tcp_rustls(listener, tls)?

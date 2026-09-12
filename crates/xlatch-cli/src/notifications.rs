@@ -1,4 +1,4 @@
-//! Optional Apprise delivery, independent of capability execution.
+//! Optional native ntfy or Apprise delivery, independent of capability execution.
 
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, params};
@@ -10,10 +10,20 @@ use std::{
 };
 use xlatch_core::{capability::digest, paths::default_config_dir, store::Store};
 
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Provider {
+    #[default]
+    Apprise,
+    Ntfy,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
-    /// Full Apprise API /notify/KEY URL. Destination credentials stay in Apprise.
+    #[serde(default)]
+    provider: Provider,
+    /// Full Apprise API /notify/KEY URL or ntfy topic URL.
     endpoint: String,
     #[serde(default)]
     tag: String,
@@ -29,8 +39,8 @@ pub struct Delivery {
     state: Connection,
 }
 
-fn validate_endpoint(value: &str) -> Result<()> {
-    let url = url::Url::parse(value).context("invalid Apprise endpoint")?;
+fn validate_endpoint(value: &str, provider: Provider) -> Result<()> {
+    let url = url::Url::parse(value).context("invalid notification endpoint")?;
     let local = url.host_str().is_some_and(|host| {
         host == "localhost"
             || host
@@ -40,19 +50,31 @@ fn validate_endpoint(value: &str) -> Result<()> {
     });
     ensure!(
         url.scheme() == "https" || (url.scheme() == "http" && local),
-        "Apprise requires HTTPS except on loopback"
+        "Notifications require HTTPS except on loopback"
     );
     ensure!(
         url.username().is_empty()
             && url.password().is_none()
             && url.fragment().is_none()
             && url.query().is_none(),
-        "Apprise endpoint must not contain userinfo, query or fragment"
+        "Notification endpoint must not contain userinfo, query or fragment"
     );
-    ensure!(
-        url.path().starts_with("/notify/") && url.path().len() > 8,
-        "use the Apprise API /notify/KEY endpoint"
-    );
+    match provider {
+        Provider::Apprise => ensure!(
+            url.path().starts_with("/notify/") && url.path().len() > 8,
+            "use the Apprise API /notify/KEY endpoint"
+        ),
+        Provider::Ntfy => {
+            let topic = url.path().trim_start_matches('/');
+            ensure!(
+                !topic.is_empty()
+                    && topic
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-'),
+                "ntfy endpoint must contain a single topic using letters, digits, underscores or hyphens"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -64,20 +86,32 @@ pub fn prepare(dir: &Path) -> Result<Option<Delivery>> {
         Err(error) => return Err(error).context("reading notifications.toml"),
     };
     let config: Config = toml::from_str(&body).map_err(|_| {
-        anyhow::anyhow!("invalid notifications.toml; expected endpoint, tag and optional token_env")
+        anyhow::anyhow!(
+            "invalid notifications.toml; expected provider, endpoint, tag and optional token_env"
+        )
     })?;
-    validate_endpoint(&config.endpoint)?;
+    validate_endpoint(&config.endpoint, config.provider)?;
+    ensure!(
+        matches!(config.provider, Provider::Apprise) || config.tag.is_empty(),
+        "tag is only supported for Apprise"
+    );
     let token = config
         .token_env
         .as_ref()
-        .map(|name| std::env::var(name).context("Apprise token environment variable is missing"))
+        .map(|name| {
+            std::env::var(name).context("Notification token environment variable is missing")
+        })
         .transpose()?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
         .timeout(Duration::from_secs(15))
         .build()?;
-    let destination = digest(format!("{}\n{}", config.endpoint, config.tag).as_bytes());
+    let identity = match config.provider {
+        Provider::Apprise => format!("{}\n{}", config.endpoint, config.tag),
+        Provider::Ntfy => format!("ntfy\n{}", config.endpoint),
+    };
+    let destination = digest(identity.as_bytes());
     let state = Connection::open(dir.join("notifications.sqlite3"))?;
     state.busy_timeout(Duration::from_secs(5))?;
     state.execute_batch("CREATE TABLE IF NOT EXISTS cursors(destination TEXT PRIMARY KEY, sequence INTEGER NOT NULL);")?;
@@ -126,7 +160,20 @@ impl Delivery {
         let events = Store::open(dir)?.events("local", cursor)?;
         for event in events {
             if let Some(body) = payload(&event.status, &self.config.tag) {
-                let mut request = self.client.post(&self.config.endpoint).json(&body);
+                let mut request = match self.config.provider {
+                    Provider::Apprise => self.client.post(&self.config.endpoint).json(&body),
+                    Provider::Ntfy => self
+                        .client
+                        .post(&self.config.endpoint)
+                        .header("Title", "xlatch")
+                        .header("Content-Type", "text/plain; charset=utf-8")
+                        .body(
+                            body["body"]
+                                .as_str()
+                                .context("missing notification text")?
+                                .to_owned(),
+                        ),
+                };
                 if let Some(token) = &self.token {
                     request = request.bearer_auth(token);
                 }
@@ -134,10 +181,10 @@ impl Delivery {
                 let response = request
                     .send()
                     .await
-                    .map_err(|_| anyhow::anyhow!("Apprise connection failed"))?;
+                    .map_err(|_| anyhow::anyhow!("Notification connection failed"))?;
                 ensure!(
                     response.status().is_success(),
-                    "Apprise rejected notification (HTTP {})",
+                    "Notification provider rejected notification (HTTP {})",
                     response.status().as_u16()
                 );
             }
@@ -156,7 +203,7 @@ impl Delivery {
         loop {
             if let Err(error) = self.step(&dir).await {
                 // Retry only notifications, never the underlying job. An uncertain HTTP
-                // outcome can produce a duplicate: Apprise has no idempotency contract.
+                // outcome can produce a duplicate: delivery providers have no shared idempotency contract.
                 log::warn!("Notification delivery paused: {error}; retrying in {delay}s");
                 tokio::time::sleep(Duration::from_secs(delay)).await;
                 delay = (delay * 2).min(300);
@@ -174,19 +221,38 @@ mod tests {
 
     #[test]
     fn endpoint_policy() {
-        for endpoint in [
-            "http://127.0.0.1:8000/notify/xlatch",
-            "https://push.example.com/notify/xlatch",
-        ] {
-            assert!(validate_endpoint(endpoint).is_ok());
-        }
-        for endpoint in [
-            "http://example.com/notify/xlatch",
-            "https://user:secret@example.com/notify/xlatch",
-            "https://example.com/notify/xlatch?token=secret",
-            "https://example.com/notify/",
-        ] {
-            assert!(validate_endpoint(endpoint).is_err());
+        let cases = [
+            (
+                Provider::Apprise,
+                "http://127.0.0.1:8000/notify/xlatch",
+                true,
+            ),
+            (
+                Provider::Apprise,
+                "https://push.example.com/notify/xlatch",
+                true,
+            ),
+            (Provider::Apprise, "https://example.com/notify/", false),
+            (Provider::Apprise, "http://example.com/notify/xlatch", false),
+            (
+                Provider::Apprise,
+                "https://user:secret@example.com/notify/xlatch",
+                false,
+            ),
+            (
+                Provider::Apprise,
+                "https://example.com/notify/xlatch?token=secret",
+                false,
+            ),
+            (Provider::Ntfy, "https://ntfy.sh/xlatch-alerts", true),
+            (Provider::Ntfy, "http://127.0.0.1:8000/topic", true),
+            (Provider::Ntfy, "https://ntfy.sh/", false),
+            (Provider::Ntfy, "https://ntfy.sh/topic/json", false),
+            (Provider::Ntfy, "https://ntfy.sh/topic?auth=secret", false),
+            (Provider::Ntfy, "http://ntfy.sh/topic", false),
+        ];
+        for (provider, endpoint, expected) in cases {
+            assert_eq!(validate_endpoint(endpoint, provider).is_ok(), expected);
         }
     }
 
