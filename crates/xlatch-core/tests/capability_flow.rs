@@ -689,7 +689,22 @@ fn protected_migration_checks_phone_keys_and_revokes_unverified_devices() -> Res
         "reject injected additional approvers"
     );
     conn.execute("DELETE FROM approvers WHERE device_id=?1", [&other])?;
+    let request = xlatch_core::approval::ApprovalRequest::Prepare {
+        capability_id: "echo".into(),
+        revision: cap.revision,
+        devices: vec![],
+    };
+    let pending = prepared_payload(&mut store, &owner, request)?;
     store.prepare_protected_migration(&anchor)?;
+    assert!(
+        approval_rpc(
+            &mut store,
+            &owner,
+            capability_decision(&pending, &approval, true)?
+        )
+        .is_err(),
+        "migration invalidates outstanding approvals"
+    );
     assert!(store.discover(&other)?.is_empty());
     assert_eq!(store.discover(&owner)?.len(), 1);
     Ok(())
@@ -733,6 +748,251 @@ fn registration_does_not_read_host_files() -> Result<()> {
             .approve(&proposed.id, &registered.revision, true)
             .is_err(),
         "activation must still inspect the executable"
+    );
+    Ok(())
+}
+
+fn approval_rpc(
+    store: &mut Store,
+    owner: &str,
+    request: xlatch_core::approval::ApprovalRequest,
+) -> Result<serde_json::Value> {
+    service::dispatch(store, owner, Request::Approval { request })
+}
+
+fn capability_decision(
+    payload: &str,
+    key: &p256::ecdsa::SigningKey,
+    approve: bool,
+) -> Result<xlatch_core::approval::ApprovalRequest> {
+    let review: xlatch_core::approval::ApprovalReview = serde_json::from_str(payload)?;
+    let signature: p256::ecdsa::Signature =
+        key.sign(&xlatch_core::approval::decision_bytes(payload, approve));
+    Ok(xlatch_core::approval::ApprovalRequest::Decide {
+        id: review.id,
+        approve,
+        signature: STANDARD.encode(signature.to_der().as_bytes()),
+    })
+}
+
+#[test]
+fn phone_capability_approval_binds_manifest_targets_and_decision() -> Result<()> {
+    use xlatch_core::approval::ApprovalRequest;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (owner, request_key) = pair(&mut store, 70)?;
+    let (other, _) = pair(&mut store, 71)?;
+    let key = enable_guard(&mut store, &owner)?;
+    let mut action = manifest();
+    action.id = "new.action".into();
+    let cap = store.register(&action)?;
+    for caller in ["local", &other] {
+        assert!(approval_rpc(&mut store, caller, ApprovalRequest::Catalog).is_err());
+    }
+    let prepare = ApprovalRequest::Prepare {
+        capability_id: action.id.clone(),
+        revision: cap.revision.clone(),
+        devices: vec![other.clone()],
+    };
+    let payload = approval_rpc(&mut store, &owner, prepare)?
+        .as_str()
+        .context("review payload")?
+        .to_owned();
+    assert_eq!(store.capability(&action.id)?.status, "pending");
+    for (pointer, value) in [
+        ("/devices", json!([])),
+        (
+            "/manifest/execution",
+            json!({"kind":"command","program":"/bin/sh","args":[],"sha256":"a".repeat(64)}),
+        ),
+        ("/server_id", json!("other-server")),
+        ("/revision", json!("b".repeat(64))),
+    ] {
+        let mut altered: serde_json::Value = serde_json::from_str(&payload)?;
+        *altered.pointer_mut(pointer).context("review field")? = value;
+        let forged = capability_decision(&serde_json::to_string(&altered)?, &key, true)?;
+        assert!(approval_rpc(&mut store, &owner, forged).is_err());
+    }
+    let mut swapped = capability_decision(&payload, &key, false)?;
+    if let ApprovalRequest::Decide { approve, .. } = &mut swapped {
+        *approve = true;
+    }
+    assert!(approval_rpc(&mut store, &owner, swapped).is_err());
+    let signed = capability_decision(&payload, &key, true)?;
+    assert!(approval_rpc(&mut store, &other, signed.clone()).is_err());
+    assert!(approval_rpc(&mut store, "local", signed.clone()).is_err());
+    let rpc = envelope(
+        &owner,
+        &request_key,
+        &Request::Approval {
+            request: signed.clone(),
+        },
+    )?;
+    let authenticated = store.authenticate(&rpc)?;
+    service::dispatch(&mut store, &owner, authenticated)?;
+    assert!(approval_rpc(&mut store, &owner, signed).is_err());
+    assert_eq!(store.capability(&action.id)?.status, "active");
+    assert!(
+        store
+            .invoke(
+                &owner,
+                &action.id,
+                &cap.revision,
+                &json!({"text":"no grant"}),
+                "owner"
+            )
+            .is_err()
+    );
+    store.invoke(
+        &other,
+        &action.id,
+        &cap.revision,
+        &json!({"text":"shared"}),
+        "other",
+    )?;
+    let mut reopened = Store::initialize(&fixture.0)?;
+    let payload = approval_rpc(
+        &mut reopened,
+        &owner,
+        ApprovalRequest::Prepare {
+            capability_id: action.id.clone(),
+            revision: cap.revision.clone(),
+            devices: vec![owner.clone()],
+        },
+    )?
+    .as_str()
+    .context("payload")?
+    .to_owned();
+    approval_rpc(
+        &mut reopened,
+        &owner,
+        capability_decision(&payload, &key, true)?,
+    )?;
+    assert_eq!(
+        reopened.discover(&other)?.len(),
+        2,
+        "additive grants retain previous access"
+    );
+    reopened.invoke(
+        &owner,
+        &action.id,
+        &cap.revision,
+        &json!({"text":"granted"}),
+        "owner",
+    )?;
+    Ok(())
+}
+
+fn prepared_payload(
+    store: &mut Store,
+    owner: &str,
+    request: xlatch_core::approval::ApprovalRequest,
+) -> Result<String> {
+    Ok(approval_rpc(store, owner, request)?
+        .as_str()
+        .context("review payload")?
+        .to_owned())
+}
+
+#[test]
+fn capability_approval_rechecks_races_expiry_and_rejection_atomically() -> Result<()> {
+    use xlatch_core::approval::ApprovalRequest;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (owner, _) = pair(&mut store, 72)?;
+    let (target, _) = pair(&mut store, 73)?;
+    let key = enable_guard(&mut store, &owner)?;
+    let mut action = manifest();
+    action.id = "pending".into();
+    let cap = store.register(&action)?;
+    let prepare = ApprovalRequest::Prepare {
+        capability_id: action.id.clone(),
+        revision: cap.revision,
+        devices: vec![owner.clone(), target.clone()],
+    };
+    let payload = prepared_payload(&mut store, &owner, prepare.clone())?;
+    let replaced = prepared_payload(&mut store, &owner, prepare.clone())?;
+    assert!(
+        approval_rpc(
+            &mut store,
+            &owner,
+            capability_decision(&payload, &key, true)?
+        )
+        .is_err()
+    );
+    let db = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    db.execute("UPDATE capability_approvals SET expires_at=0", [])?;
+    assert!(
+        approval_rpc(
+            &mut store,
+            &owner,
+            capability_decision(&replaced, &key, true)?
+        )
+        .is_err()
+    );
+    let payload = prepared_payload(&mut store, &owner, prepare.clone())?;
+    action.title = "Changed after review".into();
+    store.register(&action)?;
+    assert!(
+        approval_rpc(
+            &mut store,
+            &owner,
+            capability_decision(&payload, &key, true)?
+        )
+        .is_err()
+    );
+    action.title = "Echo".into();
+    store.register(&action)?;
+    let payload = prepared_payload(&mut store, &owner, prepare)?;
+    store.revoke(&target)?;
+    assert!(
+        approval_rpc(
+            &mut store,
+            &owner,
+            capability_decision(&payload, &key, true)?
+        )
+        .is_err()
+    );
+    assert_eq!(
+        store.capability(&action.id)?.status,
+        "pending",
+        "activation rolls back when any target changes"
+    );
+    let grants: i64 = db.query_row(
+        "SELECT count(*) FROM grants WHERE capability_id='pending'",
+        [],
+        |r| r.get(0),
+    )?;
+    assert_eq!(grants, 0, "earlier target writes roll back too");
+    approval_rpc(
+        &mut store,
+        &owner,
+        capability_decision(&payload, &key, false)?,
+    )?;
+    assert!(
+        approval_rpc(
+            &mut store,
+            &owner,
+            capability_decision(&payload, &key, true)?
+        )
+        .is_err()
+    );
+    assert_eq!(store.capability(&action.id)?.status, "pending");
+    #[cfg(unix)]
+    assert!(
+        xlatch_core::local::authorize_control(
+            &xlatch_core::local::Control::Rpc {
+                request: Request::Approval {
+                    request: ApprovalRequest::Catalog
+                }
+            },
+            true
+        )
+        .is_err()
     );
     Ok(())
 }

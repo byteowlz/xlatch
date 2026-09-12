@@ -87,6 +87,24 @@ fn verify(key: &str, signature: &str, bytes: &[u8]) -> Result<()> {
         .context("invalid approval signature")
 }
 
+pub(crate) fn verify_approver(
+    conn: &Connection,
+    owner: &str,
+    signature: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    ensure!(
+        is_approver(conn, owner)?,
+        "an enrolled approver is required"
+    );
+    let key: String = conn.query_row(
+        "SELECT public_key FROM approvers WHERE device_id=?1",
+        [owner],
+        |r| r.get(0),
+    )?;
+    verify(&key, signature, bytes)
+}
+
 pub(crate) fn is_approver(conn: &Connection, owner: &str) -> Result<bool> {
     Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM approvers a JOIN devices d ON d.id=a.device_id WHERE d.id=?1 AND d.revoked=0 AND d.enrollment_status='active')", [owner], |r| r.get(0))?)
 }
@@ -294,13 +312,8 @@ impl Store {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure!(is_approver(&tx, owner)?, "an enrolled approver is required");
-        let key: String = tx.query_row(
-            "SELECT public_key FROM approvers WHERE device_id=?1",
-            [owner],
-            |r| r.get(0),
-        )?;
         let payload: String = tx.query_row("SELECT p.payload FROM pending_enrollments p JOIN devices d ON d.id=p.device_id WHERE p.device_id=?1 AND p.decision IS NULL AND p.expires_at>=?2 AND d.revoked=0 AND d.enrollment_status='pending'", params![id,now()], |r| r.get(0)).context("enrollment expired or already decided")?;
-        verify(&key, signature, &decision_bytes(&payload, approve))?;
+        verify_approver(&tx, owner, signature, &decision_bytes(&payload, approve))?;
         let review: EnrollmentReview = serde_json::from_str(&payload)?;
         ensure!(
             review.server_id == server_id(&tx)?
@@ -401,6 +414,7 @@ impl Store {
         tx.execute("DELETE FROM tickets", [])?;
         tx.execute("DELETE FROM enrollment_bootstrap", [])?;
         tx.execute("DELETE FROM pending_enrollments", [])?;
+        tx.execute("DELETE FROM capability_approvals", [])?;
         tx.execute("DELETE FROM nonces", [])?;
         tx.commit()?;
         Ok(())

@@ -81,7 +81,7 @@ Enrollment operations use the existing signed `/v1/rpc` envelope with `{"op":"en
 
 Enable signing bytes are `xlatch.enrollment.enable.v1\n{server_id}\n{device_id}\n{token}\n{public_key}`. Decision bytes are `xlatch.enrollment.decision.v1\n{approve|reject}\n{exact_payload}`. Sign these UTF-8 bytes with ECDSA-SHA256, not a pre-hashed message. Do not reserialize the review payload before signing. Its SHA-256 prefix (six bytes as twelve uppercase hexadecimal digits) is the comparison code shown on both devices. Always render and validate the same payload being signed.
 
-This is enrollment protection, not yet phone approval for capability activation, grant changes or individual jobs. See ADR 0001 for the trust boundary and initial recovery limitations.
+Enrollment and capability approval use separate signing domains. Individual job approvals remain future work. See ADR 0001 for the trust boundary and initial recovery limitations.
 
 ## Protected execution and identity migration
 
@@ -90,3 +90,15 @@ The internal executor socket is restricted by OS peer UID and is not an agent op
 `xlatch identity` emits a public QR with purpose `xlatch.identity`, the stable `server_id`, HTTPS `url`/`urls`, and the fresh certificate `pin`. It grants no enrollment authority. Trusting it is an explicit, locally authenticated certificate migration on an already paired phone, with the existing server identity checked before saving. It is not automatically accepted from the network.
 
 The protected-installation fingerprint is lowercase SHA-256 of UTF-8 `xlatch.protected.anchor.v1\n{server_id}\n{device_id}\n{base64_ed25519_public_key}\n{base64_uncompressed_p256_public_key}`. The phone derives both public keys from its own stored keys. This out-of-band comparison anchors the privileged import of previously user-writable state.
+
+## Phone-approved capabilities and grants
+
+An active enrolled approver uses the signed RPC envelope with `{"op":"approval","request":{"action":"catalog"}}` to list all registered capabilities (including pending revisions) and active device identities. This does not grant the approver ordinary invocation access to those actions.
+
+`prepare` takes `capability_id`, the expected `revision`, and a `devices` array of IDs to grant. It returns an exact JSON string containing `id` (random single-use challenge), `server_id`, `policy_version:1`, `approver_id`, the full `manifest`, `revision`, device IDs/names/Ed25519 keys, and `expires_at` (ten minutes). A new prepare replaces that approver's outstanding review. Only an approver can prepare; local registration remains declarative and pending.
+
+The iOS app displays the execution binding, schemas, revision and chosen recipients before asking for biometric consent. `decide` takes the review `id`, boolean `approve`, and base64 DER ECDSA-SHA256 `signature` over exact UTF-8 `xlatch.capability.decision.v1\n{approve|reject}\n{payload}` using the existing P-256 approval key. Do not reserialize the payload. The broker checks the current approver, server, expiry, signature, exact current manifest/revision and every recipient's active identity in one write transaction. Activation, additive grants and consumption commit together. Any failed recipient check rolls back activation and all grants. Rejection consumes the review without changing permissions; it does not delete the registration. Consumed decisions retain the payload, signature and decision time as audit evidence; they cannot replay. Protected trust migration discards these previous reviews.
+
+Grants add access to the reviewed revision; unselected devices retain their prior grants, and no device becomes an approver. Empty recipients activate without granting. Existing active revisions can be reviewed again to add recipients. Revoking grants and approving individual jobs are separate future operations. Broker approval never reads an executable or destination with privileged service credentials; the executor validates the host binding under its execution identity before each job. Approval is not proof that a program exists or can run.
+
+Protected local control continues to deny approval, grants and invocation shortcuts. User mode retains trusted local-operator authority. Oqto/MCP adapters may propose registrations and use authorized invocations, but neither a tool result nor an agent's review substitutes for the approver signature.

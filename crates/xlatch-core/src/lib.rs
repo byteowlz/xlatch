@@ -36,6 +36,7 @@ pub fn default_parallelism() -> usize {
     std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
 }
 
+pub mod approval;
 pub mod auth;
 pub mod capability;
 pub mod enrollment;

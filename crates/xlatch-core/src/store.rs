@@ -49,7 +49,7 @@ impl Store {
         let conn = Connection::open(dir.join("xlatch.sqlite3"))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 3, "database was created by a newer xlatch");
+        ensure!(version <= 4, "database was created by a newer xlatch");
         conn.pragma_update(None, "foreign_keys", true)?;
         if version == 0 {
             conn.execute_batch(include_str!("../migrations/001.sql"))?;
@@ -60,6 +60,9 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         if version < 3 {
             conn.execute_batch(include_str!("../migrations/003.sql"))?;
+        }
+        if version < 4 {
+            conn.execute_batch(include_str!("../migrations/004.sql"))?;
         }
         Ok(Self { conn })
     }

@@ -235,7 +235,12 @@ pub struct Event {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
-    /// Device enrollment and approval operations.
+    /// Phone-signed capability activation and additive device grants.
+    Approval {
+        /// Approver operation.
+        request: crate::approval::ApprovalRequest,
+    },
+    /// Phone-approved device enrollment and approval policy.
     Enrollment {
         /// Authenticated enrollment operation.
         request: crate::enrollment::EnrollmentRequest,
