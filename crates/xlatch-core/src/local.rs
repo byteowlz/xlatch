@@ -29,6 +29,15 @@ pub enum Control {
         /// Acknowledge trusted host execution.
         allow_host_execution: bool,
     },
+    /// Grant a reviewed capability revision without pairing again.
+    Grant {
+        /// Paired device identifier.
+        device: String,
+        /// Capability identifier.
+        id: String,
+        /// Reviewed capability revision.
+        revision: String,
+    },
     /// Issue a short-lived QR bootstrap.
     Pair {
         /// Exact capability ids to grant.
@@ -123,6 +132,14 @@ async fn handle(
                 )?;
                 ticket.urls = urls.into_iter().skip(1).collect();
                 Ok(serde_json::to_value(ticket)?)
+            }
+            Control::Grant {
+                device,
+                id,
+                revision,
+            } => {
+                store.grant(&device, &id, &revision)?;
+                Ok(json!({"device":device,"capability":id,"revision":revision,"granted":true}))
             }
             Control::Devices => Ok(serde_json::to_value(store.devices()?)?),
             Control::Revoke { id } => {

@@ -344,3 +344,32 @@ async fn wait_for_status(
     .await
     .context("job did not reach expected status")?
 }
+
+#[test]
+fn newly_granted_actions_appear_without_pairing_again() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let initial = store.register(&manifest())?;
+    store.approve("echo", &initial.revision, false)?;
+    let (device, _) = pair(&mut store, 71)?;
+    let mut added = manifest();
+    added.id = "another-action".into();
+    let pending = store.register(&added)?;
+    assert!(store.grant(&device, &added.id, &pending.revision).is_err());
+    store.approve(&added.id, &pending.revision, false)?;
+    assert_eq!(store.discover(&device)?.len(), 1);
+    assert!(store.grant(&device, &added.id, "stale").is_err());
+    store.grant(&device, &added.id, &pending.revision)?;
+    assert_eq!(
+        store
+            .discover(&device)?
+            .iter()
+            .map(|cap| cap.manifest.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["another-action", "echo"]
+    );
+    store.grant(&device, &added.id, &pending.revision)?;
+    store.revoke(&device)?;
+    assert!(store.grant(&device, &added.id, &pending.revision).is_err());
+    Ok(())
+}

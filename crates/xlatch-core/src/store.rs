@@ -113,6 +113,22 @@ impl Store {
         self.capability(id)
     }
 
+    /// Grant an approved revision to an already paired device.
+    ///
+    /// # Errors
+    /// Rejects unknown or revoked devices and pending or stale capability revisions.
+    pub fn grant(&self, device: &str, id: &str, revision: &str) -> Result<()> {
+        let changed = self.conn.execute(
+            "INSERT INTO grants(device_id,capability_id,revision) SELECT d.id,c.id,c.revision FROM devices d JOIN capabilities c ON c.id=?2 WHERE d.id=?1 AND d.revoked=0 AND c.status='active' AND c.revision=?3 ON CONFLICT(device_id,capability_id) DO UPDATE SET revision=excluded.revision",
+            params![device, id, revision],
+        )?;
+        ensure!(
+            changed == 1,
+            "grant requires an active device and an approved, current capability revision"
+        );
+        Ok(())
+    }
+
     /// List registrations for a local operator or scoped device.
     ///
     /// # Errors

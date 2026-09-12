@@ -64,6 +64,13 @@ enum Command {
         #[arg(long)]
         qr: Option<PathBuf>,
     },
+    /// Grant an approved action revision to a paired device without pairing again.
+    Grant {
+        device: String,
+        id: String,
+        #[arg(long)]
+        revision: String,
+    },
     /// List paired devices.
     Devices,
     /// Revoke device access and cancel its jobs.
@@ -129,6 +136,15 @@ async fn main() -> Result<()> {
         } => {
             return pairing::run(&data_dir, capabilities, output, cli.json).await;
         }
+        Command::Grant {
+            device,
+            id,
+            revision,
+        } => Control::Grant {
+            device,
+            id,
+            revision,
+        },
         Command::Devices => Control::Devices,
         Command::Revoke { id } => Control::Revoke { id },
         Command::List => Control::Rpc {
