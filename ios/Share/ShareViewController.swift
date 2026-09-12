@@ -30,7 +30,7 @@ final class ShareViewController: UIViewController {
         do {
             guard let items = context?.inputItems as? [NSExtensionItem], let provider = items.flatMap({ $0.attachments ?? [] }).first else { throw ClientError.message("No shareable content was provided.") }
             input = try await Self.load(provider)
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Open CrossLatch and pair your server first.") }
+            guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
             capabilities = try await APIClient(connection: connection).capabilities()
         } catch { self.error = error.localizedDescription }
     }
@@ -38,7 +38,7 @@ final class ShareViewController: UIViewController {
         guard sending == nil, let input else { return }
         sending = capability.id; error = nil; defer { sending = nil }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in CrossLatch first.") }
+            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
             let key = requestKeys[capability.id] ?? UUID().uuidString; requestKeys[capability.id] = key
             _ = try await APIClient(connection: connection).invoke(capability, input: input, key: key)
             sent = true
@@ -78,7 +78,7 @@ struct ShareView: View {
                     VStack(spacing: 20) {
                         Image(systemName: "checkmark.circle").font(.system(size: 48)).foregroundStyle(.tint)
                         Text("Sent to your server").font(.title2.bold())
-                        Text("You can close this sheet. Find the result in CrossLatch’s Activity tab.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Text("You can close this sheet. Find the result in xlatch’s Activity tab.").foregroundStyle(.secondary).multilineTextAlignment(.center)
                         Button("Done") { model.done() }.buttonStyle(.borderedProminent)
                     }.padding(28)
                 } else {
@@ -103,7 +103,7 @@ struct ShareView: View {
                         }
                     }
                 }
-            }.navigationTitle("CrossLatch").navigationBarTitleDisplayMode(.inline)
+            }.navigationTitle("xlatch").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { model.done() }.disabled(model.sending != nil) } }
         }.tint(Color(red: 0.12, green: 0.43, blue: 0.34))
     }

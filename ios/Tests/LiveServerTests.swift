@@ -5,7 +5,7 @@ final class LiveServerTests: XCTestCase {
     func testPinnedPairingSignedInvocationAndResult() async throws {
         guard let code = ProcessInfo.processInfo.environment["XLATCH_TEST_TICKET"], !code.isEmpty else { throw XCTSkip("Requires a fresh test-server enrollment ticket") }
         let ticket = try JSONDecoder().decode(PairingTicket.self, from: Data(code.utf8))
-        let connection = try await APIClient.pair(ticket, name: "CrossLatch simulator test")
+        let connection = try await APIClient.pair(ticket, name: "xlatch simulator test")
         let client = try APIClient(connection: connection)
         let capabilities = try await client.capabilities()
         let capability = try XCTUnwrap(capabilities.first(where: { $0.id == "echo" }))

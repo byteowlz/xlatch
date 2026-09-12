@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>CrossLatch</string>
+	<string>xlatch</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,9 +26,9 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan a pairing code from your CrossLatch server.</string>
+	<string>Scan a pairing code from your xlatch server.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect to your paired CrossLatch server to send actions and retrieve results.</string>
+	<string>Connect to your paired xlatch server to send actions and retrieve results.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

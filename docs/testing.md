@@ -43,7 +43,7 @@ The manifest generator supplies generic object schemas; tighten them to the exac
 
 ## iOS
 
-Open `ios/XLatch.xcodeproj` in Xcode. The project includes a native SwiftUI app, share extension, shared Keychain/app-group entitlements, QR scanner, and tests. `ios/project.yml` is the XcodeGen source.
+Open `ios/XLatch.xcodeproj` in Xcode. The project includes a native SwiftUI app, share extension, shared Keychain/app-group entitlements, QR scanner, and tests. `ios/project.json` is the XcodeGen source.
 
 Simulator tests require entitlements: use normal simulator/ad-hoc signing, not `CODE_SIGNING_ALLOWED=NO`, for Keychain coverage. A fresh enrollment JSON in the test environment variable `XLATCH_TEST_TICKET` enables the live HTTPS test; without it that one test is explicitly skipped. Never commit this value. Protocol-only tests require no server.
 

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>CrossLatch</string>
+	<string>xlatch</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -49,7 +49,7 @@
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Send shared content to your paired CrossLatch server.</string>
+	<string>Send shared content to your paired xlatch server.</string>
 	<key>XLatchKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)com.byteowlz.xlatch.shared</string>
 </dict>

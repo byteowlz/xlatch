@@ -96,7 +96,7 @@ struct PairView: View {
                 Button("Paste pairing code") { manual = true }.frame(maxWidth: .infinity).disabled(busy)
                 Text("Create a pairing code with xlatch-cli on your server. Codes expire after five minutes.")
                     .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .center)
-            }.padding(28).navigationTitle("CrossLatch").navigationBarTitleDisplayMode(.inline)
+            }.padding(28).navigationTitle("xlatch").navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $scanning) { QRScanner { value in scanning = false; connect(value) } }
             .sheet(isPresented: $manual) {
                 NavigationStack {
@@ -141,7 +141,7 @@ struct ActionsView: View {
                                 }.padding(.vertical, 6)
                             }
                         }
-                    } footer: { Text("Also available in the share menu of other apps. Choose CrossLatch, then an action.") }
+                    } footer: { Text("Also available in the share menu of other apps. Choose xlatch, then an action.") }
                 }
             }.navigationTitle("Actions").refreshable { await model.refresh() }
         }
