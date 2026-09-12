@@ -1,4 +1,4 @@
-# CrossLatch
+# CrossLatch (xlatch)
 
 Share content from your phone to approved server capabilities. The Rust service provides pinned HTTPS pairing, device grants, typed manifests, durable SQLite jobs, and a private Unix control socket. The native iOS app includes a share extension.
 

@@ -1,4 +1,4 @@
-# CrossLatch
+# CrossLatch (xlatch)
 
 **Capability**: A named, typed action offered to a person or agent. Its manifest describes the input, output, and execution binding.
 

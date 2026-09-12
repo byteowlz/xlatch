@@ -114,6 +114,7 @@ When you modify `AppConfig` or any config struct in `xlatch-core/src/config.rs`:
 The MCP server uses the official `rmcp` crate (Rust SDK for Model Context Protocol).
 
 **Key patterns:**
+
 - `#[tool_router]` on impl block auto-generates tool routing
 - `#[tool_handler]` on `ServerHandler` impl wires tools into the server
 - `ServerInfo` is non-exhaustive — use `let mut info = ServerInfo::default(); info.field = value;`
@@ -127,7 +128,7 @@ The MCP server uses the official `rmcp` crate (Rust SDK for Model Context Protoc
 - Ship a commented example under `examples/`, create a default config on first run, and load overrides via the `config` crate.
 - Environment variable override prefix: `RUST_WORKSPACE__` (double underscore for nesting, e.g., `RUST_WORKSPACE__LOGGING__LEVEL=debug`).
 
-## House Rules
+## Rules
 
 - Do exactly what the user asks — no unsolicited files or docs.
 - Keep README updates concise, emoji-free, and only when requested.
@@ -185,42 +186,6 @@ trx close <id> --reason "Done" --json         # Complete work
 ```
 
 Priorities: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog
-
-Always commit `.beads/issues.jsonl` with code changes.
-
-## Memory System (agntz memory)
-
-Use `agntz memory` to store and retrieve project knowledge. Memories auto-detect the current repo.
-
-**Adding memories:**
-
-```bash
-agntz memory add "Important decision or learning"              # Auto-detects current repo
-agntz memory add "Cross-repo architecture decision" --govnr    # Force govnr store
-agntz memory add "Specific insight" -c "architecture" -i 8     # With category and importance
-```
-
-**Searching memories:**
-
-```bash
-agntz memory search "query"           # Search current repo's memories
-agntz memory search "query" --govnr   # Search cross-repo memories
-agntz memory search "query" --all     # Search ALL projects
-```
-
-**When to add memories:**
-
-- Architecture decisions and their rationale
-- Non-obvious solutions to tricky problems
-- Integration patterns with other byteowlz repos
-- Performance findings or benchmarks
-- API contracts or breaking changes
-
-**When to search memories:**
-
-- Before starting work on a feature (check for prior decisions)
-- When encountering unfamiliar code patterns
-- When integrating with other repos (`agntz memory search "query" --all`)
 
 ## Releases & Distribution
 
