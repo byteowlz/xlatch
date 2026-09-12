@@ -75,6 +75,9 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
         .layer(DefaultBodyLimit::max(MAX_BYTES))
         .layer(tower::limit::ConcurrencyLimitLayer::new(32))
         .with_state(state);
+    let listener = std::net::TcpListener::bind(cli.listen)
+        .with_context(|| format!("cannot listen on {}", cli.listen))?;
+    let address = listener.local_addr()?;
     let mut tasks = tokio::task::JoinSet::new();
     #[cfg(unix)]
     tasks.spawn(local::serve(data_dir.clone(), cli.public_url.clone(), pin));
@@ -84,14 +87,18 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
         tasks.spawn(worker::run(data_dir.clone()));
     }
     let handle = axum_server::Handle::new();
-    let server = axum_server::bind_rustls(cli.listen, tls)
+    let server = axum_server::from_tcp_rustls(listener, tls)?
         .handle(handle.clone())
         .serve(app.into_make_service());
-    log::info!(
-        "CrossLatch listening on {}; public origin {}",
-        cli.listen,
-        cli.public_url
-    );
+    eprintln!("xlatch listening on https://{address}");
+    eprintln!("Pairing URL: {}", cli.public_url);
+    eprintln!("Data directory: {}", data_dir.display());
+    if address.ip().is_loopback() {
+        eprintln!(
+            "Local connections only. For phone access, set --listen and --public-url to a reachable interface and HTTPS origin."
+        );
+    }
+    eprintln!("Run `xlatch pair` in another terminal. Press Ctrl-C to stop.");
     tokio::pin!(server);
     tokio::select! {
         result=&mut server=>result?,
