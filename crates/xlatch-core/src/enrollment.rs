@@ -133,6 +133,14 @@ pub(crate) fn queue(
 }
 
 impl Store {
+    /// Stable server identity for an explicit certificate migration.
+    ///
+    /// # Errors
+    /// Returns storage errors.
+    pub fn server_identity(&self) -> Result<String> {
+        server_id(&self.conn)
+    }
+
     /// Pending devices may poll only their own status; local RPC cannot impersonate phones.
     ///
     /// # Errors
@@ -190,7 +198,9 @@ impl Store {
             params![device, digest(token.as_bytes()), expiry],
         )?;
         tx.commit()?;
-        Ok(json!({"token":token,"expires_at":expiry,"device_id":device}))
+        Ok(
+            json!({"purpose":"xlatch.approval-bootstrap","server_id":server_id(&self.conn)?,"token":token,"expires_at":expiry,"device_id":device}),
+        )
     }
 
     fn enrollment_status(&self, owner: &str) -> Result<Value> {
@@ -355,5 +365,44 @@ pub fn dispatch(store: &mut Store, owner: &str, request: EnrollmentRequest) -> R
             approve,
             signature,
         } => store.decide_enrollment(owner, &id, approve, &signature),
+    }
+}
+
+impl Store {
+    /// Verify a phone-displayed trust anchor before importing user-owned approval state.
+    /// Invalidate every other device, ticket and pending enrollment during the migration.
+    ///
+    /// # Errors
+    /// Rejects missing/multiple approvers, a changed identity/key, or an incorrect anchor.
+    pub fn prepare_protected_migration(&mut self, expected_anchor: &str) -> Result<()> {
+        ensure!(
+            expected_anchor.len() == 64 && expected_anchor.bytes().all(|b| b.is_ascii_hexdigit()),
+            "copy the protected-installation fingerprint from the approver phone"
+        );
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let count: i64 = tx.query_row("SELECT count(*) FROM approvers", [], |r| r.get(0))?;
+        ensure!(
+            count == 1,
+            "migration requires exactly one explicitly verified approver"
+        );
+        let (id,key,approval): (String,String,String) = tx.query_row("SELECT d.id,d.public_key,a.public_key FROM devices d JOIN approvers a ON a.device_id=d.id WHERE d.revoked=0 AND d.enrollment_status='active'",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+        let frame = format!(
+            "xlatch.protected.anchor.v1\n{}\n{id}\n{key}\n{approval}",
+            server_id(&tx)?
+        );
+        ensure!(
+            digest(frame.as_bytes()) == expected_anchor.to_ascii_lowercase(),
+            "approver fingerprint does not match the phone; do not migrate this state"
+        );
+        tx.execute("UPDATE devices SET revoked=1 WHERE id<>?1", [&id])?;
+        tx.execute("DELETE FROM grants WHERE device_id<>?1", [&id])?;
+        tx.execute("DELETE FROM tickets", [])?;
+        tx.execute("DELETE FROM enrollment_bootstrap", [])?;
+        tx.execute("DELETE FROM pending_enrollments", [])?;
+        tx.execute("DELETE FROM nonces", [])?;
+        tx.commit()?;
+        Ok(())
     }
 }

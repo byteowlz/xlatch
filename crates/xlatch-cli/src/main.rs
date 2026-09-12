@@ -4,6 +4,8 @@ mod destination;
 mod network;
 mod notifications;
 mod pairing;
+mod protected;
+mod protected_install;
 mod server;
 mod service_install;
 
@@ -27,12 +29,23 @@ struct Cli {
     data_dir: Option<PathBuf>,
     #[arg(long, global = true)]
     json: bool,
+    /// Directory of a protected service's local control socket.
+    #[arg(long, global = true)]
+    control_dir: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Show a QR for explicitly trusting a rotated server certificate on paired phones.
+    Identity,
+    /// Run the unprivileged executor for a protected service.
+    Executor {
+        /// Working directory for approved commands (never the service data directory).
+        #[arg(long)]
+        work_dir: PathBuf,
+    },
     /// Issue a one-time code for enabling phone-approved enrollment in the app.
     EnrollmentBootstrap {
         /// Existing paired device that will become the first approver.
@@ -40,6 +53,9 @@ enum Command {
     },
     /// Run or manage the background user service.
     Service {
+        /// Manage the system service under its dedicated account.
+        #[arg(long, global = true)]
+        protected: bool,
         #[command(subcommand)]
         command: service_install::Command,
     },
@@ -121,11 +137,18 @@ async fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
     let data_dir = cli.data_dir.map_or_else(default_data_dir, Ok)?;
+    let control_dir = cli.control_dir.unwrap_or_else(|| data_dir.clone());
     let mut wait_for = None;
     let control = match cli.command {
-        Command::EnrollmentBootstrap { device } => Control::EnrollmentBootstrap { device },
-        Command::Service { command } => {
-            return service_install::dispatch(data_dir, command).await;
+        Command::Identity => return pairing::identity(&control_dir, cli.json).await,
+        Command::Executor { work_dir } => {
+            return protected::run_executor(control_dir, work_dir).await;
+        }
+        Command::EnrollmentBootstrap { device } => {
+            return pairing::enrollment_bootstrap(&control_dir, device, cli.json).await;
+        }
+        Command::Service { command, protected } => {
+            return service_install::dispatch(data_dir, command, protected).await;
         }
         Command::Destination {
             command:
@@ -136,7 +159,7 @@ async fn main() -> Result<()> {
                 },
         } => {
             let capability =
-                destination::add(&data_dir, &name, directory, device.as_deref()).await?;
+                destination::add(&control_dir, &name, directory, device.as_deref()).await?;
             println!("{}", serde_json::to_string_pretty(&capability)?);
             return Ok(());
         }
@@ -160,7 +183,7 @@ async fn main() -> Result<()> {
             capabilities,
             qr: output,
         } => {
-            return pairing::run(&data_dir, capabilities, output, cli.json).await;
+            return pairing::run(&control_dir, capabilities, output, cli.json).await;
         }
         Command::Grant {
             device,
@@ -209,8 +232,8 @@ async fn main() -> Result<()> {
             request: Request::Events { after },
         },
     };
-    let value = local::call(&data_dir, control).await?;
-    finish_output(&data_dir, value, None, wait_for).await
+    let value = local::call(&control_dir, control).await?;
+    finish_output(&control_dir, value, None, wait_for).await
 }
 
 async fn finish_output(

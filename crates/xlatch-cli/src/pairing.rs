@@ -26,22 +26,11 @@ pub async fn run(
     }
     let value = local::call(dir, Control::Pair { capabilities }).await?;
     if !json && io::stdout().is_terminal() {
-        let encoded = serde_json::to_string(&value)?;
-        let code = qrcode::QrCode::new(encoded.as_bytes())?;
-        // Explicit colors keep the QR readable on both light and dark terminal themes.
-        let rendered = code.render::<qrcode::render::unicode::Dense1x2>().build();
-        println!("\nScan in xlatch → Server → Scan QR. Expires in five minutes.\n");
-        for line in rendered.lines() {
-            println!("\x1b[30;47m{line}\x1b[0m");
-        }
-        if let Some(path) = qr {
-            std::fs::write(
-                path,
-                code.render::<qrcode::render::svg::Color<'_>>()
-                    .min_dimensions(512, 512)
-                    .build(),
-            )?;
-        }
+        print_qr(
+            &value,
+            qr.as_deref(),
+            "Scan in xlatch → Server → Scan QR. Expires in five minutes.",
+        )?;
         return Ok(());
     }
     super::finish_output(dir, value, qr, None).await
@@ -141,4 +130,50 @@ fn prompt(message: &str) -> Result<String> {
     let mut answer = String::new();
     ensure!(io::stdin().read_line(&mut answer)? > 0, "pairing cancelled");
     Ok(answer.trim().to_owned())
+}
+
+fn print_qr(value: &serde_json::Value, qr: Option<&Path>, instructions: &str) -> Result<()> {
+    let encoded = serde_json::to_string(value)?;
+    let code = qrcode::QrCode::new(encoded.as_bytes())?;
+    // Explicit colors keep the QR readable on both light and dark terminal themes.
+    let rendered = code.render::<qrcode::render::unicode::Dense1x2>().build();
+    println!("\n{instructions}\n");
+    for line in rendered.lines() {
+        println!("\x1b[30;47m{line}\x1b[0m");
+    }
+    if let Some(path) = qr {
+        std::fs::write(
+            path,
+            code.render::<qrcode::render::svg::Color<'_>>()
+                .min_dimensions(512, 512)
+                .build(),
+        )?;
+    }
+    Ok(())
+}
+
+pub async fn identity(dir: &Path, json: bool) -> Result<()> {
+    let value = local::call(dir, Control::Identity).await?;
+    if !json && io::stdout().is_terminal() {
+        print_qr(
+            &value,
+            None,
+            "On each paired phone: Server → Update server identity. Only do this after an administrator-approved migration.",
+        )
+    } else {
+        super::finish_output(dir, value, None, None).await
+    }
+}
+
+pub async fn enrollment_bootstrap(dir: &Path, device: String, json: bool) -> Result<()> {
+    let value = local::call(dir, Control::EnrollmentBootstrap { device }).await?;
+    if !json && io::stdout().is_terminal() {
+        print_qr(
+            &value,
+            None,
+            "On the selected phone: Server → Device approvals → Scan setup code. Expires in five minutes.",
+        )
+    } else {
+        super::finish_output(dir, value, None, None).await
+    }
 }

@@ -55,3 +55,6 @@
 {"id":"evt_rz7a13wt","issue_id":"xltch-bjgv","action":"created","timestamp":"2026-09-12T12:32:37.699702Z"}
 {"id":"evt_bcyh3xtz","issue_id":"xltch-xsrs","action":"created","timestamp":"2026-09-12T12:32:42.585678Z"}
 {"id":"evt_xrvyxz93","issue_id":"xltch-y8q6","action":"updated","timestamp":"2026-09-12T12:36:55.254795Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
+{"id":"evt_8ssjz824","issue_id":"xltch-yp4v","action":"updated","timestamp":"2026-09-12T12:53:41.679527Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
+{"id":"evt_82qcksdj","issue_id":"xltch-wza3","action":"created","timestamp":"2026-09-12T13:32:14.646604Z"}
+{"id":"evt_qgkvj67n","issue_id":"xltch-8bh2","action":"created","timestamp":"2026-09-12T13:32:14.666471Z"}

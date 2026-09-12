@@ -22,6 +22,12 @@ pub enum Command {
     Restart,
     /// Install and start the service at user login.
     Enable {
+        /// Unprivileged account for executing jobs in protected mode.
+        #[arg(long)]
+        executor_user: Option<String>,
+        /// Fingerprint displayed by the approver phone for a protected migration.
+        #[arg(long)]
+        approver_fingerprint: Option<String>,
         #[command(flatten)]
         options: server::Options,
         /// Show the generated definition without changing the system.
@@ -32,10 +38,40 @@ pub enum Command {
     Disable,
 }
 
-pub async fn dispatch(dir: PathBuf, command: Command) -> Result<()> {
+pub async fn dispatch(dir: PathBuf, command: Command, protected: bool) -> Result<()> {
+    if protected {
+        return match command {
+            Command::Enable {
+                options,
+                dry_run,
+                executor_user,
+                approver_fingerprint,
+            } => crate::protected_install::enable(
+                &dir,
+                &options,
+                executor_user
+                    .as_deref()
+                    .context("protected installation requires --executor-user")?,
+                dry_run,
+                approver_fingerprint.as_deref(),
+            ),
+            command => crate::protected_install::control(&command),
+        };
+    }
     match command {
         Command::Run(options) => server::run(dir, options).await,
-        Command::Enable { options, dry_run } => enable(&dir, &options, dry_run),
+        Command::Enable {
+            options,
+            dry_run,
+            executor_user,
+            approver_fingerprint,
+        } => {
+            ensure!(
+                executor_user.is_none() && approver_fingerprint.is_none(),
+                "--executor-user requires --protected"
+            );
+            enable(&dir, &options, dry_run)
+        }
         command => control(&command),
     }
 }
@@ -216,7 +252,7 @@ fn checked(program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn xml_escape(value: &str) -> String {
+pub fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -225,7 +261,7 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn systemd_quote(value: &str) -> String {
+pub fn systemd_quote(value: &str) -> String {
     format!(
         "\"{}\"",
         value

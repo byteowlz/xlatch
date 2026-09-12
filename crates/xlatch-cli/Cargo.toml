@@ -44,4 +44,4 @@ url.workspace = true
 fs2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", features = ["net"] }
+nix = { version = "0.30", features = ["net", "user", "fs"] }

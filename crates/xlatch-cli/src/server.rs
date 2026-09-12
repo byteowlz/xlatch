@@ -21,6 +21,9 @@ use xlatch_core::{
 
 #[derive(Debug, Clone, Args)]
 pub struct Options {
+    /// Administrator-owned protected service configuration.
+    #[arg(long)]
+    pub protected_config: Option<PathBuf>,
     /// Bind interface; use 0.0.0.0:7443 to accept paired LAN clients.
     #[arg(long, default_value = "0.0.0.0:7443")]
     pub listen: SocketAddr,
@@ -46,16 +49,13 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     if let Some(port) = cli.port {
         cli.listen.set_port(port);
     }
+    let protected = crate::protected::load(cli.protected_config.as_deref(), &data_dir)?;
     let mut origins = crate::network::origins(cli.listen, cli.public_url.as_deref())?;
-    let mut store = Store::initialize(&data_dir)?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(data_dir.join("daemon.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&lock)
-        .context("another daemon already uses this data directory")?;
+    let (mut store, lock) = open_store(&data_dir)?;
     let notifications = crate::notifications::prepare(&data_dir)?;
+    if protected.is_some() {
+        crate::protected::require_guard(&data_dir)?;
+    }
     store.recover()?;
     let (tls, pin) = tls_config(
         &data_dir,
@@ -83,11 +83,26 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     let address = listener.local_addr()?;
     let mut tasks = tokio::task::JoinSet::new();
     #[cfg(unix)]
-    tasks.spawn(local::serve(data_dir.clone(), origins.clone(), pin));
+    if let Some(config) = &protected {
+        tasks.spawn(local::serve_scoped(
+            data_dir.clone(),
+            config.control_dir.clone(),
+            origins.clone(),
+            pin,
+            Some(config.executor_uid),
+        ));
+    } else {
+        tasks.spawn(local::serve(data_dir.clone(), origins.clone(), pin));
+    }
     #[cfg(not(unix))]
     anyhow::bail!("v0 local registration currently requires Unix; Windows support is tracked");
-    for _ in 0..cli.workers {
-        tasks.spawn(worker::run(data_dir.clone()));
+    if protected.is_none() {
+        for _ in 0..cli.workers {
+            tasks.spawn(worker::run(data_dir.clone()));
+        }
+    } else {
+        tasks.spawn(crate::protected::reap_leases(data_dir.clone()));
+        eprintln!("Protected service: execution runs in a separate unprivileged process.");
     }
     if let Some(notifications) = notifications {
         tasks.spawn(notifications.run(data_dir.clone()));
@@ -238,4 +253,21 @@ async fn shutdown_signal() -> Result<()> {
     #[cfg(not(unix))]
     tokio::signal::ctrl_c().await?;
     Ok(())
+}
+
+fn open_store(data_dir: &std::path::Path) -> Result<(Store, std::fs::File)> {
+    std::fs::create_dir_all(data_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(data_dir.join("daemon.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&lock)
+        .context("another daemon already uses this data directory")?;
+    Ok((Store::initialize(data_dir)?, lock))
 }

@@ -555,3 +555,184 @@ fn enrollment_rechecks_expiry_revision_and_signed_decision() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn protected_control_rejects_operator_shortcuts_and_private_worker_access() {
+    use xlatch_core::{
+        executor::ExecutorRequest,
+        local::{Control, authorize_control},
+    };
+    for request in [
+        Control::Approve {
+            id: "echo".into(),
+            revision: "r".into(),
+            allow_host_execution: true,
+        },
+        Control::Grant {
+            device: "d".into(),
+            id: "echo".into(),
+            revision: "r".into(),
+        },
+        Control::Revoke { id: "d".into() },
+        Control::EnrollmentBootstrap { device: "d".into() },
+        Control::Rpc {
+            request: Request::Jobs,
+        },
+    ] {
+        assert!(authorize_control(&request, true).is_err());
+    }
+    let worker = Control::Executor {
+        request: ExecutorRequest::Claim,
+    };
+    assert!(authorize_control(&worker, false).is_err());
+    assert!(authorize_control(&worker, true).is_ok());
+    assert!(authorize_control(&Control::Identity, true).is_ok());
+}
+
+#[test]
+fn executor_leases_bind_results_and_do_not_replay_expired_work() -> Result<()> {
+    use xlatch_core::executor::{self, ExecutorRequest, Work};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let job = store.invoke(
+        "local",
+        "echo",
+        &cap.revision,
+        &json!({"text":"test"}),
+        "lease",
+    )?;
+    let work: Work =
+        serde_json::from_value(executor::dispatch(&mut store, ExecutorRequest::Claim)?)?;
+    assert_eq!(work.job.id, job.id);
+    let complete = |lease: String, result| ExecutorRequest::Complete {
+        id: job.id.clone(),
+        lease,
+        result: Some(result),
+        error: None,
+    };
+    assert!(executor::dispatch(&mut store, complete("0".repeat(64), json!({}))).is_err());
+    assert!(
+        executor::dispatch(
+            &mut store,
+            complete(work.lease.clone(), json!("wrong schema"))
+        )
+        .is_err()
+    );
+    executor::dispatch(
+        &mut store,
+        complete(work.lease.clone(), json!({"text":"done"})),
+    )?;
+    assert!(executor::dispatch(&mut store, complete(work.lease, json!({}))).is_err());
+    assert_eq!(
+        store.job("local", &job.id)?.result,
+        Some(json!({"text":"done"}))
+    );
+    let second = store.invoke(
+        "local",
+        "echo",
+        &cap.revision,
+        &json!({"text":"test"}),
+        "expired",
+    )?;
+    let work: Work =
+        serde_json::from_value(executor::dispatch(&mut store, ExecutorRequest::Claim)?)?;
+    let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    conn.execute("UPDATE executor_leases SET expires_at=0", [])?;
+    store.expire_executor_leases()?;
+    assert_eq!(store.job("local", &second.id)?.status, "failed");
+    assert!(
+        executor::dispatch(
+            &mut store,
+            ExecutorRequest::Complete {
+                id: second.id,
+                lease: work.lease,
+                result: Some(json!({})),
+                error: None
+            }
+        )
+        .is_err()
+    );
+    assert!(executor::dispatch(&mut store, ExecutorRequest::Claim)?.is_null());
+    Ok(())
+}
+
+#[test]
+fn protected_migration_checks_phone_keys_and_revokes_unverified_devices() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (owner, rpc_key) = pair(&mut store, 70)?;
+    let (other, _) = pair(&mut store, 71)?;
+    let approval = enable_guard(&mut store, &owner)?;
+    let anchor = xlatch_core::capability::digest(
+        format!(
+            "xlatch.protected.anchor.v1\n{}\n{owner}\n{}\n{}",
+            store.server_identity()?,
+            STANDARD.encode(rpc_key.verifying_key().as_bytes()),
+            STANDARD.encode(approval.verifying_key().to_encoded_point(false).as_bytes())
+        )
+        .as_bytes(),
+    );
+    assert!(store.prepare_protected_migration(&"0".repeat(64)).is_err());
+    assert_eq!(
+        store.discover(&other)?.len(),
+        1,
+        "failed migration must not revoke clients"
+    );
+    let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    conn.execute("INSERT INTO approvers VALUES(?1,'forged')", [&other])?;
+    assert!(
+        store.prepare_protected_migration(&anchor).is_err(),
+        "reject injected additional approvers"
+    );
+    conn.execute("DELETE FROM approvers WHERE device_id=?1", [&other])?;
+    store.prepare_protected_migration(&anchor)?;
+    assert!(store.discover(&other)?.is_empty());
+    assert_eq!(store.discover(&owner)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn executor_protocol_preserves_successful_json_null() -> Result<()> {
+    use xlatch_core::executor::ExecutorRequest;
+    let value = json!({"action":"complete","id":"job","lease":"lease","result":null,"error":null});
+    let request: ExecutorRequest = serde_json::from_value(value.clone())?;
+    assert!(matches!(
+        &request,
+        ExecutorRequest::Complete {
+            result: Some(serde_json::Value::Null),
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(serde_json::to_value(request)?, value);
+    Ok(())
+}
+
+#[test]
+fn registration_does_not_read_host_files() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let store = fixture.store()?;
+    let mut proposed = manifest();
+    proposed.execution = Execution::Command {
+        program: fixture
+            .0
+            .join("not-built-yet")
+            .to_string_lossy()
+            .into_owned(),
+        args: vec![],
+        sha256: "0".repeat(64),
+    };
+    let registered = store.register(&proposed)?;
+    assert_eq!(registered.status, "pending");
+    assert!(
+        store
+            .approve(&proposed.id, &registered.revision, true)
+            .is_err(),
+        "activation must still inspect the executable"
+    );
+    Ok(())
+}

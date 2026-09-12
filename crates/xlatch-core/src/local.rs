@@ -15,6 +15,13 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Control {
+    /// Public server identity for an explicit certificate migration.
+    Identity,
+    /// Lease or complete work; available only on a protected executor transport.
+    Executor {
+        /// Internal worker operation.
+        request: crate::executor::ExecutorRequest,
+    },
     /// Create a one-time first-approver bootstrap for an existing device.
     EnrollmentBootstrap {
         /// Device explicitly selected by the operator.
@@ -68,27 +75,46 @@ pub enum Control {
 /// Returns socket setup or accept errors.
 #[cfg(unix)]
 pub async fn serve(dir: std::path::PathBuf, urls: Vec<String>, pin: String) -> Result<()> {
+    serve_scoped(dir.clone(), dir, urls, pin, None).await
+}
+
+/// Serve an optionally restricted socket for the unprivileged executor OS identity.
+///
+/// # Errors
+/// Returns socket setup and accept errors.
+#[cfg(unix)]
+pub async fn serve_scoped(
+    dir: std::path::PathBuf,
+    control_dir: std::path::PathBuf,
+    urls: Vec<String>,
+    pin: String,
+    executor_uid: Option<u32>,
+) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let socket = dir.join("control.sock");
+    let socket = control_dir.join("control.sock");
     if socket.exists() {
         std::fs::remove_file(&socket)?;
     }
     let listener = tokio::net::UnixListener::bind(&socket)?;
-    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+    std::fs::set_permissions(
+        &socket,
+        std::fs::Permissions::from_mode(if executor_uid.is_some() { 0o666 } else { 0o600 }),
+    )?;
     let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(16));
     loop {
         let permit = permits.clone().acquire_owned().await?;
         let (stream, _) = listener.accept().await?;
-        ensure!(
-            stream.peer_cred()?.uid() == nix::unistd::getuid().as_raw(),
-            "unexpected local peer"
-        );
+        if stream.peer_cred()?.uid()
+            != executor_uid.unwrap_or_else(|| nix::unistd::getuid().as_raw())
+        {
+            continue;
+        }
         let (dir, urls, pin) = (dir.clone(), urls.clone(), pin.clone());
         tokio::spawn(async move {
             let _permit = permit;
             if let Err(error) = tokio::time::timeout(
                 std::time::Duration::from_secs(15),
-                handle(stream, &dir, urls, pin),
+                handle(stream, &dir, urls, pin, executor_uid.is_some()),
             )
             .await
             .unwrap_or_else(|_| Err(anyhow::anyhow!("local request timed out")))
@@ -105,6 +131,7 @@ async fn handle(
     dir: &Path,
     urls: Vec<String>,
     pin: String,
+    protected: bool,
 ) -> Result<()> {
     let (read, mut write) = stream.into_split();
     let mut buffer = Vec::new();
@@ -118,7 +145,12 @@ async fn handle(
     let outcome = (|| {
         let control: Control = serde_json::from_slice(&buffer)?;
         let mut store = Store::open(dir)?;
+        authorize_control(&control, protected)?;
         match control {
+            Control::Identity => Ok(
+                json!({"purpose":"xlatch.identity","server_id":store.server_identity()?,"url":urls.first().context("no server address")?,"urls":urls,"pin":pin}),
+            ),
+            Control::Executor { request } => crate::executor::dispatch(&mut store, request),
             Control::EnrollmentBootstrap { device } => {
                 Ok(serde_json::to_value(store.enrollment_bootstrap(&device)?)?)
             }
@@ -195,4 +227,33 @@ pub async fn call(dir: &Path, control: Control) -> Result<Value> {
             .unwrap_or("control request failed")
     );
     Ok(response["value"].clone())
+}
+
+/// Restrict local agents to proposals, pending pairing and leased execution.
+///
+/// # Errors
+/// Rejects privileged operator shortcuts on the protected transport.
+pub fn authorize_control(control: &Control, protected: bool) -> Result<()> {
+    if !protected {
+        ensure!(
+            !matches!(control, Control::Executor { .. }),
+            "executor leases require protected service mode"
+        );
+        return Ok(());
+    }
+    ensure!(
+        matches!(
+            control,
+            Control::Identity
+                | Control::Executor { .. }
+                | Control::Register { .. }
+                | Control::Pair { .. }
+                | Control::Devices
+                | Control::Rpc {
+                    request: Request::Discover
+                }
+        ),
+        "protected service denies local approval, grant, revocation and invocation shortcuts; use an authorized device"
+    );
+    Ok(())
 }

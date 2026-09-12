@@ -94,8 +94,10 @@ impl Manifest {
                 "save destination must be absolute"
             );
             ensure!(
-                std::fs::canonicalize(directory)? == std::path::Path::new(directory),
-                "save destination must be canonical"
+                !std::path::Path::new(directory)
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir)),
+                "save destination must not traverse parents"
             );
         }
         if let Execution::Command {
@@ -112,11 +114,38 @@ impl Manifest {
                 args.len() <= 64 && args.iter().all(|a| a.len() <= 4096),
                 "too many/large arguments"
             );
-            ensure!(sha256.len() == 64, "expected executable SHA-256");
             ensure!(
-                digest(&std::fs::read(program)?) == *sha256,
-                "executable hash mismatch"
+                sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+                "expected executable SHA-256"
             );
+        }
+        Ok(())
+    }
+
+    /// Inspect host files only as a trusted operator or unprivileged executor.
+    /// Registration in the protected broker must never call this method.
+    ///
+    /// # Errors
+    /// Rejects non-canonical destinations, special files, and changed executables.
+    pub fn validate_host_binding(&self) -> Result<()> {
+        match &self.execution {
+            Execution::SaveFile { directory } => ensure!(
+                std::fs::canonicalize(directory)? == std::path::Path::new(directory),
+                "save destination must be canonical"
+            ),
+            Execution::Command {
+                program, sha256, ..
+            } => {
+                ensure!(
+                    std::fs::metadata(program)?.is_file(),
+                    "program must be a regular file"
+                );
+                ensure!(
+                    digest(&std::fs::read(program)?) == *sha256,
+                    "executable hash mismatch"
+                );
+            }
+            Execution::Echo => {}
         }
         Ok(())
     }

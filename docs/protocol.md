@@ -82,3 +82,11 @@ Enrollment operations use the existing signed `/v1/rpc` envelope with `{"op":"en
 Enable signing bytes are `xlatch.enrollment.enable.v1\n{server_id}\n{device_id}\n{token}\n{public_key}`. Decision bytes are `xlatch.enrollment.decision.v1\n{approve|reject}\n{exact_payload}`. Sign these UTF-8 bytes with ECDSA-SHA256, not a pre-hashed message. Do not reserialize the review payload before signing. Its SHA-256 prefix (six bytes as twelve uppercase hexadecimal digits) is the comparison code shown on both devices. Always render and validate the same payload being signed.
 
 This is enrollment protection, not yet phone approval for capability activation, grant changes or individual jobs. See ADR 0001 for the trust boundary and initial recovery limitations.
+
+## Protected execution and identity migration
+
+The internal executor socket is restricted by OS peer UID and is not an agent operator API. It accepts leased claim/status/complete operations; only approved, revision-checked jobs can be claimed. Lease expiry fails the job without retrying its side effects. A returned `result: null` is a successful JSON-null result; omission of result with an error is a failure.
+
+`xlatch identity` emits a public QR with purpose `xlatch.identity`, the stable `server_id`, HTTPS `url`/`urls`, and the fresh certificate `pin`. It grants no enrollment authority. Trusting it is an explicit, locally authenticated certificate migration on an already paired phone, with the existing server identity checked before saving. It is not automatically accepted from the network.
+
+The protected-installation fingerprint is lowercase SHA-256 of UTF-8 `xlatch.protected.anchor.v1\n{server_id}\n{device_id}\n{base64_ed25519_public_key}\n{base64_uncompressed_p256_public_key}`. The phone derives both public keys from its own stored keys. This out-of-band comparison anchors the privileged import of previously user-writable state.
