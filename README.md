@@ -9,10 +9,10 @@ cargo install --path crates/xlatch-cli
 xlatch service run
 ```
 
-For phone access, supply a reachable LAN or Tailscale origin when first starting the service:
+Network access is the default. The server discovers active interface addresses, including LAN and mesh VPNs, and the phone selects a reachable address using the QR certificate pin:
 
 ```sh
-xlatch service enable --listen 0.0.0.0:7443 --public-url https://YOUR_SERVER_IP:7443
+xlatch service enable
 xlatch pair
 ```
 
@@ -30,7 +30,7 @@ xlatch service status
 xlatch service disable   # stop and disable automatic startup
 ```
 
-`enable --dry-run` prints the service definition without installing it. Linux uses a systemd user service; macOS uses a launch agent. Run `enable` before controlling an installed service. Linux startup without a login requires user lingering configured separately. Pass the same global `--data-dir` when accessing a service using a custom directory. Changing an existing HTTPS identity's hostname requires explicit certificate migration; set the reachable origin before pairing.
+`enable --dry-run` prints the service definition without installing it. Linux uses a systemd user service; macOS uses a launch agent. Run `enable` before controlling an installed service. Linux startup without a login requires user lingering configured separately. Pass the same global `--data-dir` when accessing a service using a custom directory. Use `--port 6789` to change ports, `--listen 127.0.0.1:7443` for local-only operation, or `--public-url https://host:port` to advertise an explicit origin. Discovery uses IPv4 by default; an explicit IPv6 listener discovers IPv6 addresses. Paired identities are preserved when interfaces change; adding addresses outside an existing certificate requires migration or re-pairing. An unpaired localhost-only identity upgrades automatically.
 
 The source package is `xlatch` in `crates/xlatch-cli`. The separate `xlatch-api` executable has been removed. MCP remains an adapter in `xlatch-mcp`.
 

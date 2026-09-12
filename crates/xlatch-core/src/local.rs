@@ -53,7 +53,7 @@ pub enum Control {
 /// # Errors
 /// Returns socket setup or accept errors.
 #[cfg(unix)]
-pub async fn serve(dir: std::path::PathBuf, url: String, pin: String) -> Result<()> {
+pub async fn serve(dir: std::path::PathBuf, urls: Vec<String>, pin: String) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let socket = dir.join("control.sock");
     if socket.exists() {
@@ -69,12 +69,12 @@ pub async fn serve(dir: std::path::PathBuf, url: String, pin: String) -> Result<
             stream.peer_cred()?.uid() == nix::unistd::getuid().as_raw(),
             "unexpected local peer"
         );
-        let (dir, url, pin) = (dir.clone(), url.clone(), pin.clone());
+        let (dir, urls, pin) = (dir.clone(), urls.clone(), pin.clone());
         tokio::spawn(async move {
             let _permit = permit;
             if let Err(error) = tokio::time::timeout(
                 std::time::Duration::from_secs(15),
-                handle(stream, &dir, url, pin),
+                handle(stream, &dir, urls, pin),
             )
             .await
             .unwrap_or_else(|_| Err(anyhow::anyhow!("local request timed out")))
@@ -89,7 +89,7 @@ pub async fn serve(dir: std::path::PathBuf, url: String, pin: String) -> Result<
 async fn handle(
     stream: tokio::net::UnixStream,
     dir: &Path,
-    url: String,
+    urls: Vec<String>,
     pin: String,
 ) -> Result<()> {
     let (read, mut write) = stream.into_split();
@@ -115,11 +115,15 @@ async fn handle(
                 &revision,
                 allow_host_execution,
             )?)?),
-            Control::Pair { capabilities } => Ok(serde_json::to_value(store.pairing_ticket(
-                url,
-                pin,
-                &capabilities,
-            )?)?),
+            Control::Pair { capabilities } => {
+                let mut ticket = store.pairing_ticket(
+                    urls.first().context("no pairing addresses")?.clone(),
+                    pin,
+                    &capabilities,
+                )?;
+                ticket.urls = urls.into_iter().skip(1).collect();
+                Ok(serde_json::to_value(ticket)?)
+            }
             Control::Devices => Ok(serde_json::to_value(store.devices()?)?),
             Control::Revoke { id } => {
                 store.revoke(&id)?;
@@ -145,7 +149,7 @@ async fn handle(
 pub async fn call(dir: &Path, control: Control) -> Result<Value> {
     let mut stream = tokio::net::UnixStream::connect(dir.join("control.sock"))
         .await
-        .context("cannot reach xlatch; start xlatch-api first")?;
+        .context("cannot reach xlatch; start xlatch service run first")?;
     let body = serde_json::to_vec(&control)?;
     ensure!(body.len() < MAX_BYTES, "request exceeds 8 MiB");
     stream.write_all(&body).await?;

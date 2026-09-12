@@ -64,3 +64,7 @@ The iOS app polls while active and on return, can request local notifications fo
 - ComfyUI: a wrapper enqueues a configured workflow, polls its job, and returns an image artifact. The endpoint/workflow selection belongs to reviewed configuration.
 
 The latter three are adapter contracts, not claims of installed or configured services. Agent review may be added as advisory analysis of a pending revision; it must never override deterministic approval/grant checks. Persistent registration is implemented; process-leased capabilities, push delivery, remote executors, large-artifact storage, and Android are tracked extensions.
+
+## Network candidates
+
+Enrollment tickets retain `url` as the primary HTTPS origin and may include `urls`, an array of alternate origins under the same DER certificate pin. The server advertises at most eight discovered addresses from active interfaces. Native clients validate every origin and probe pinned HTTPS health endpoints before choosing one; enrollment and signed RPC bodies are submitted once, after discovery. Mesh providers need no dedicated adapter because their interfaces expose normal routed IP addresses. Interface discovery does not override VPN access policies or firewall rules.

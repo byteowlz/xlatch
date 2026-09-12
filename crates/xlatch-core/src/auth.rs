@@ -17,6 +17,9 @@ pub struct PairingTicket {
     pub version: u8,
     /// HTTPS server origin.
     pub url: String,
+    /// Alternate origins sharing the same pinned certificate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub urls: Vec<String>,
     /// Lowercase SHA-256 of the server's DER certificate.
     pub pin: String,
     /// Single-use, random enrollment secret.
@@ -143,6 +146,7 @@ impl Store {
         )?;
         Ok(PairingTicket {
             version: 1,
+            urls: Vec::new(),
             url,
             pin,
             token,

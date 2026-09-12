@@ -22,11 +22,14 @@ use xlatch_core::{
 #[derive(Debug, Clone, Args)]
 pub struct Options {
     /// Bind interface; use 0.0.0.0:7443 to accept paired LAN clients.
-    #[arg(long, default_value = "127.0.0.1:7443")]
+    #[arg(long, default_value = "0.0.0.0:7443")]
     pub listen: SocketAddr,
+    /// Override the listening port (also used in discovered pairing addresses).
+    #[arg(long)]
+    pub port: Option<u16>,
     /// Reachable HTTPS origin embedded in enrollment QR codes.
-    #[arg(long, default_value = "https://localhost:7443")]
-    pub public_url: String,
+    #[arg(long)]
+    pub public_url: Option<String>,
     #[arg(long,default_value_t=2,value_parser=clap::value_parser!(u16).range(1..=16))]
     pub workers: u16,
 }
@@ -39,18 +42,11 @@ struct AppState {
 
 type ApiResult = Result<Json<Value>, (StatusCode, Json<Value>)>;
 
-pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
-    let url = url::Url::parse(&cli.public_url)?;
-    ensure!(
-        url.scheme() == "https"
-            && url.host_str().is_some()
-            && url.path() == "/"
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "--public-url must be an HTTPS origin"
-    );
+pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
+    if let Some(port) = cli.port {
+        cli.listen.set_port(port);
+    }
+    let mut origins = crate::network::origins(cli.listen, cli.public_url.as_deref())?;
     let mut store = Store::initialize(&data_dir)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -60,7 +56,12 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
     fs2::FileExt::try_lock_exclusive(&lock)
         .context("another daemon already uses this data directory")?;
     store.recover()?;
-    let (tls, pin) = tls_config(&data_dir, url.host_str().context("missing host")?).await?;
+    let (tls, pin) = tls_config(
+        &data_dir,
+        &mut origins,
+        store.devices()?.iter().any(|device| !device.revoked),
+    )
+    .await?;
     let state = AppState {
         dir: data_dir.clone(),
         permits: Arc::new(tokio::sync::Semaphore::new(16)),
@@ -81,7 +82,7 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
     let address = listener.local_addr()?;
     let mut tasks = tokio::task::JoinSet::new();
     #[cfg(unix)]
-    tasks.spawn(local::serve(data_dir.clone(), cli.public_url.clone(), pin));
+    tasks.spawn(local::serve(data_dir.clone(), origins.clone(), pin));
     #[cfg(not(unix))]
     anyhow::bail!("v0 local registration currently requires Unix; Windows support is tracked");
     for _ in 0..cli.workers {
@@ -92,7 +93,7 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
         .handle(handle.clone())
         .serve(app.into_make_service());
     eprintln!("xlatch listening on https://{address}");
-    eprintln!("Pairing URL: {}", cli.public_url);
+    eprintln!("Pairing addresses: {}", origins.join(", "));
     eprintln!("Data directory: {}", data_dir.display());
     if address.ip().is_loopback() {
         eprintln!(
@@ -112,7 +113,11 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
     Ok(())
 }
 
-async fn tls_config(dir: &std::path::Path, host: &str) -> Result<(RustlsConfig, String)> {
+async fn tls_config(
+    dir: &std::path::Path,
+    origins: &mut Vec<String>,
+    has_devices: bool,
+) -> Result<(RustlsConfig, String)> {
     let cert_path = dir.join("server.pem");
     let key_path = dir.join("server-key.pem");
     let der_path = dir.join("server.der");
@@ -120,9 +125,42 @@ async fn tls_config(dir: &std::path::Path, host: &str) -> Result<(RustlsConfig, 
         cert_path.exists() == key_path.exists() && cert_path.exists() == der_path.exists(),
         "incomplete TLS identity; restore the certificate/key/DER set"
     );
-    if !cert_path.exists() {
-        let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(vec![host.to_string(), "localhost".to_string()])?;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut regenerate = !der_path.exists();
+    if !regenerate {
+        let der = std::fs::read(&der_path)?;
+        let supported = origins
+            .iter()
+            .filter(|origin| crate::network::certificate_covers(&der, origin))
+            .cloned()
+            .collect::<Vec<_>>();
+        if supported.len() != origins.len() {
+            if has_devices {
+                ensure!(
+                    !supported.is_empty(),
+                    "the existing paired certificate covers none of the current addresses; restore the prior network address or revoke devices before re-pairing"
+                );
+                eprintln!(
+                    "Keeping the paired server identity; newly discovered addresses need certificate migration before use."
+                );
+                *origins = supported;
+            } else {
+                regenerate = true;
+            }
+        }
+    }
+    if regenerate {
+        let hosts = origins
+            .iter()
+            .map(|origin| {
+                Ok(url::Url::parse(origin)?
+                    .host_str()
+                    .context("missing host")?
+                    .trim_matches(['[', ']'])
+                    .to_owned())
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(hosts)?;
         std::fs::write(&key_path, signing_key.serialize_pem())?;
         std::fs::write(&cert_path, cert.pem())?;
         std::fs::write(&der_path, cert.der())?;
@@ -132,7 +170,6 @@ async fn tls_config(dir: &std::path::Path, host: &str) -> Result<(RustlsConfig, 
             std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
         }
     }
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
     Ok((config, digest(&std::fs::read(der_path)?)))
 }

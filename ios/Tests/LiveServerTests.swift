@@ -4,7 +4,9 @@ import XCTest
 final class LiveServerTests: XCTestCase {
     func testPinnedPairingSignedInvocationAndResult() async throws {
         guard let code = ProcessInfo.processInfo.environment["XLATCH_TEST_TICKET"], !code.isEmpty else { throw XCTSkip("Requires a fresh test-server enrollment ticket") }
-        let ticket = try JSONDecoder().decode(PairingTicket.self, from: Data(code.utf8))
+        let issued = try JSONDecoder().decode(PairingTicket.self, from: Data(code.utf8))
+        // A dead first address must not prevent pairing through a pinned alternate.
+        let ticket = PairingTicket(version: issued.version, url: "https://127.0.0.1:1", pin: issued.pin, token: issued.token, expires_at: issued.expires_at, urls: issued.candidateURLs)
         let connection = try await APIClient.pair(ticket, name: "xlatch simulator test")
         let client = try APIClient(connection: connection)
         let capabilities = try await client.capabilities()

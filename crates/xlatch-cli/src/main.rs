@@ -1,5 +1,6 @@
 //! Local operator CLI for `CrossLatch`.
 
+mod network;
 mod pairing;
 mod server;
 mod service_install;

@@ -43,7 +43,7 @@ pub async fn dispatch(dir: PathBuf, command: Command) -> Result<()> {
 fn enable(dir: &Path, options: &server::Options, dry_run: bool) -> Result<()> {
     let executable = std::env::current_exe()?;
     let dir = std::path::absolute(dir)?;
-    let args = vec![
+    let mut args = vec![
         executable
             .to_str()
             .context("executable path is not UTF-8")?
@@ -54,11 +54,15 @@ fn enable(dir: &Path, options: &server::Options, dry_run: bool) -> Result<()> {
         "run".into(),
         "--listen".into(),
         options.listen.to_string(),
-        "--public-url".into(),
-        options.public_url.clone(),
         "--workers".into(),
         options.workers.to_string(),
     ];
+    if let Some(port) = options.port {
+        args.extend(["--port".to_owned(), port.to_string()]);
+    }
+    if let Some(origin) = &options.public_url {
+        args.extend(["--public-url".to_owned(), origin.clone()]);
+    }
     let (path, definition) = definition(&args)?;
     if dry_run {
         println!(

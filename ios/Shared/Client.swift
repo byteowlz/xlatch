@@ -77,14 +77,41 @@ final class APIClient {
         let publicKey = key.publicKey.rawRepresentation.base64EncodedString()
         let message = "xlatch.pair.v1\n\(ticket.token)\n\(publicKey)\n\(name)"
         let signature = try key.signature(for: Data(message.utf8)).base64EncodedString()
-        let connection = Connection(url: ticket.url, pin: ticket.pin, deviceID: "", privateKey: key.rawRepresentation)
+        let reachable = await reachableOrigin(ticket.candidateURLs, pin: ticket.pin)
+        guard let reachable else {
+            let addresses = ticket.candidateURLs.joined(separator: ", ")
+            throw ClientError.message("Could not reach your server at \(addresses). Connect this phone to the same network or mesh VPN, and check that xlatch is running and allowed through the server firewall.")
+        }
+        let connection = Connection(url: reachable, pin: ticket.pin, deviceID: "", privateKey: key.rawRepresentation)
         let client = try APIClient(connection: connection)
         struct Enrolled: Decodable { let id: String }
         let response: Enrolled = try await client.post("v1/pair", body: ["token": ticket.token, "name": name, "public_key": publicKey, "signature": signature])
-        let saved = Connection(url: ticket.url, pin: ticket.pin, deviceID: response.id, privateKey: key.rawRepresentation)
+        let saved = Connection(url: reachable, pin: ticket.pin, deviceID: response.id, privateKey: key.rawRepresentation, urls: ticket.candidateURLs)
         try CredentialStore.save(saved)
         return saved
     }
+    private static func reachableOrigin(_ addresses: [String], pin: String) async -> String? {
+        await withTaskGroup(of: String?.self) { group in
+            for address in Set(addresses) {
+                group.addTask {
+                    do {
+                        let client = try APIClient(connection: Connection(url: address, pin: pin, deviceID: "", privateKey: Data()))
+                        guard let base = URL(string: address) else { return nil }
+                        var request = URLRequest(url: base.appendingPathComponent("health"))
+                        request.timeoutInterval = 4
+                        let (_, response) = try await client.session.data(for: request)
+                        guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+                        return address
+                    } catch { return nil }
+                }
+            }
+            for await address in group {
+                if let address { group.cancelAll(); return address }
+            }
+            return nil
+        }
+    }
+
     func rpc<T: Decodable>(_ payload: [String: Any]) async throws -> T {
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys, .withoutEscapingSlashes])
         guard let text = String(data: data, encoding: .utf8) else { throw ClientError.message("Could not encode the request.") }
@@ -111,6 +138,13 @@ final class APIClient {
         return values
     }
     private func post<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
+        if let addresses = connection.urls, addresses.count > 1 {
+            guard let origin = await Self.reachableOrigin(addresses, pin: connection.pin) else {
+                throw ClientError.message("Your server is unreachable at \(addresses.joined(separator: ", ")). Check your network or mesh VPN connection.")
+            }
+            let selected = Connection(url: origin, pin: connection.pin, deviceID: connection.deviceID, privateKey: connection.privateKey)
+            return try await APIClient(connection: selected).post(path, body: body)
+        }
         guard let base = URL(string: connection.url) else { throw ClientError.message("Invalid server address.") }
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")

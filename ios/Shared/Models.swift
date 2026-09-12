@@ -97,13 +97,20 @@ struct PairingTicket: Codable {
     let pin: String
     let token: String
     let expires_at: Int64
+    var urls: [String]? = nil
+    var candidateURLs: [String] { [url] + (urls ?? []) }
     func validate() throws {
-        guard version == 1, let endpoint = URLComponents(string: url), endpoint.scheme == "https",
-              endpoint.host != nil, endpoint.user == nil, endpoint.password == nil,
-              endpoint.query == nil, endpoint.fragment == nil, ["", "/"].contains(endpoint.path),
+        guard version == 1, candidateURLs.count <= 9,
               pin.count == 64, pin.allSatisfy({ $0.isHexDigit }), token.count == 64,
               expires_at >= Int64(Date().timeIntervalSince1970) else {
             throw ClientError.message("This pairing code is invalid or expired. Generate a new code on your server.")
+        }
+        for address in candidateURLs {
+            guard let endpoint = URLComponents(string: address), endpoint.scheme == "https",
+                  endpoint.host != nil, endpoint.user == nil, endpoint.password == nil,
+                  endpoint.query == nil, endpoint.fragment == nil, ["", "/"].contains(endpoint.path) else {
+                throw ClientError.message("This pairing code contains an invalid server address.")
+            }
         }
     }
 }
@@ -113,6 +120,7 @@ struct Connection: Codable {
     let pin: String
     let deviceID: String
     let privateKey: Data
+    var urls: [String]? = nil
 }
 
 enum ClientError: LocalizedError {
