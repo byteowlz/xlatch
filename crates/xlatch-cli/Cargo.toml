@@ -17,6 +17,7 @@ name = "xlatch"
 path = "src/main.rs"
 
 [dependencies]
+uuid.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
 xlatch-core.workspace = true

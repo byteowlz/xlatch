@@ -38,6 +38,7 @@ pub fn default_parallelism() -> usize {
 
 pub mod auth;
 pub mod capability;
+pub mod enrollment;
 pub mod local;
 pub mod service;
 pub mod store;

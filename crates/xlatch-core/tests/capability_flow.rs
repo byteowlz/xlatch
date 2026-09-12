@@ -373,3 +373,185 @@ fn newly_granted_actions_appear_without_pairing_again() -> Result<()> {
     assert!(store.grant(&device, &added.id, &pending.revision).is_err());
     Ok(())
 }
+
+fn enrollment_rpc(
+    store: &mut Store,
+    owner: &str,
+    request: xlatch_core::enrollment::EnrollmentRequest,
+) -> Result<serde_json::Value> {
+    service::dispatch(store, owner, Request::Enrollment { request })
+}
+
+fn enable_guard(store: &mut Store, owner: &str) -> Result<p256::ecdsa::SigningKey> {
+    use xlatch_core::enrollment::{EnrollmentRequest, enable_bytes};
+    let key = p256::ecdsa::SigningKey::from_slice(&[42; 32])?;
+    let public_key = STANDARD.encode(key.verifying_key().to_encoded_point(false).as_bytes());
+    let bootstrap = store.enrollment_bootstrap(owner)?;
+    let token = bootstrap["token"]
+        .as_str()
+        .context("bootstrap token")?
+        .to_string();
+    let status = enrollment_rpc(store, owner, EnrollmentRequest::Status)?;
+    let server = status["server_id"].as_str().context("server identity")?;
+    let signature: p256::ecdsa::Signature =
+        key.sign(&enable_bytes(server, owner, &token, &public_key));
+    let request = EnrollmentRequest::Enable {
+        token,
+        public_key,
+        signature: STANDARD.encode(signature.to_der().as_bytes()),
+    };
+    let result = enrollment_rpc(store, owner, request.clone())?;
+    assert_eq!(result["enabled"], true);
+    assert!(
+        enrollment_rpc(store, owner, request).is_err(),
+        "bootstrap cannot be replayed"
+    );
+    assert!(
+        store.enrollment_bootstrap(owner).is_err(),
+        "CLI cannot replace an approver"
+    );
+    Ok(key)
+}
+
+fn decision(
+    id: &str,
+    payload: &str,
+    key: &p256::ecdsa::SigningKey,
+    approve: bool,
+) -> xlatch_core::enrollment::EnrollmentRequest {
+    let signature: p256::ecdsa::Signature =
+        key.sign(&xlatch_core::enrollment::decision_bytes(payload, approve));
+    xlatch_core::enrollment::EnrollmentRequest::Decide {
+        id: id.into(),
+        approve,
+        signature: STANDARD.encode(signature.to_der().as_bytes()),
+    }
+}
+
+#[test]
+fn phone_approval_gates_enrollment_and_rejects_substitution_and_replay() -> Result<()> {
+    use xlatch_core::enrollment::EnrollmentRequest;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (approver, _) = pair(&mut store, 30)?;
+    let (legacy, _) = pair(&mut store, 31)?;
+    let key = enable_guard(&mut store, &approver)?;
+    assert!(
+        store.revoke(&approver).is_err(),
+        "CLI cannot silently remove the approver"
+    );
+    assert_eq!(
+        store.discover(&legacy)?.len(),
+        1,
+        "existing grants survive opt-in"
+    );
+    assert!(enrollment_rpc(&mut store, &legacy, EnrollmentRequest::Pending).is_err());
+    let (candidate, candidate_key) = pair(&mut store, 32)?;
+    let rpc = envelope(&candidate, &candidate_key, &Request::Jobs)?;
+    let request = store.authenticate(&rpc)?;
+    assert!(service::dispatch(&mut store, &candidate, request).is_err());
+    assert!(store.grant(&candidate, "echo", &cap.revision).is_err());
+    assert!(store.discover(&candidate)?.is_empty());
+    let state = enrollment_rpc(&mut store, &candidate, EnrollmentRequest::Status)?;
+    assert_eq!(state["device_status"], "pending");
+    let payload = state["pending_payload"]
+        .as_str()
+        .context("pending review")?;
+    let mut review: serde_json::Value = serde_json::from_str(payload)?;
+    for field in ["server_id", "public_key", "nonce", "device_id"] {
+        let original = review[field].clone();
+        review[field] = json!("substituted");
+        let forged = decision(&candidate, &serde_json::to_string(&review)?, &key, true);
+        assert!(
+            enrollment_rpc(&mut store, &approver, forged).is_err(),
+            "signature binds {field}"
+        );
+        review[field] = original;
+    }
+    let request = decision(&candidate, payload, &key, true);
+    assert!(enrollment_rpc(&mut store, "local", request.clone()).is_err());
+    assert!(enrollment_rpc(&mut store, &legacy, request.clone()).is_err());
+    assert!(enrollment_rpc(&mut store, &candidate, request.clone()).is_err());
+    let wrong_key = p256::ecdsa::SigningKey::from_slice(&[43; 32])?;
+    assert!(
+        enrollment_rpc(
+            &mut store,
+            &approver,
+            decision(&candidate, payload, &wrong_key, true)
+        )
+        .is_err()
+    );
+    enrollment_rpc(&mut store, &approver, request.clone())?;
+    assert!(enrollment_rpc(&mut store, &approver, request).is_err());
+    assert_eq!(store.discover(&candidate)?.len(), 1);
+    assert_eq!(
+        enrollment_rpc(&mut store, &candidate, EnrollmentRequest::Status)?["is_approver"],
+        false
+    );
+    drop(store);
+    let mut reopened = Store::initialize(&fixture.0)?;
+    assert_eq!(
+        enrollment_rpc(&mut reopened, &approver, EnrollmentRequest::Status)?["enabled"],
+        true
+    );
+    Ok(())
+}
+
+#[test]
+fn enrollment_rechecks_expiry_revision_and_signed_decision() -> Result<()> {
+    use xlatch_core::enrollment::EnrollmentRequest;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (approver, _) = pair(&mut store, 40)?;
+    let key = enable_guard(&mut store, &approver)?;
+    let (candidate, _) = pair(&mut store, 41)?;
+    let status = enrollment_rpc(&mut store, &candidate, EnrollmentRequest::Status)?;
+    let payload = status["pending_payload"].as_str().context("payload")?;
+    let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    conn.execute(
+        "UPDATE pending_enrollments SET expires_at=0 WHERE device_id=?1",
+        [&candidate],
+    )?;
+    assert!(
+        enrollment_rpc(
+            &mut store,
+            &approver,
+            decision(&candidate, payload, &key, true)
+        )
+        .is_err()
+    );
+    conn.execute(
+        "UPDATE pending_enrollments SET expires_at=?2 WHERE device_id=?1",
+        rusqlite::params![candidate, now() + 600],
+    )?;
+    let mut modified = manifest();
+    modified.title = "Changed".into();
+    store.register(&modified)?;
+    assert!(
+        enrollment_rpc(
+            &mut store,
+            &approver,
+            decision(&candidate, payload, &key, true)
+        )
+        .is_err()
+    );
+    let mut flipped = decision(&candidate, payload, &key, false);
+    if let EnrollmentRequest::Decide { approve, .. } = &mut flipped {
+        *approve = true;
+    }
+    assert!(enrollment_rpc(&mut store, &approver, flipped).is_err());
+    enrollment_rpc(
+        &mut store,
+        &approver,
+        decision(&candidate, payload, &key, false),
+    )?;
+    assert_eq!(
+        enrollment_rpc(&mut store, &candidate, EnrollmentRequest::Status)?["device_status"],
+        "rejected"
+    );
+    Ok(())
+}

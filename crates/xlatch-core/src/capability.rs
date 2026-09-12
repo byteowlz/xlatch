@@ -206,6 +206,11 @@ pub struct Event {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    /// Device enrollment and approval operations.
+    Enrollment {
+        /// Authenticated enrollment operation.
+        request: crate::enrollment::EnrollmentRequest,
+    },
     /// List visible active capabilities (all revisions for the local operator).
     Discover,
     /// Enqueue a typed invocation; repeated keys return the same job.

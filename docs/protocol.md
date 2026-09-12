@@ -68,3 +68,17 @@ The latter three are adapter contracts, not claims of installed or configured se
 ## Network candidates
 
 Enrollment tickets retain `url` as the primary HTTPS origin and may include `urls`, an array of alternate origins under the same DER certificate pin. The server advertises at most eight discovered addresses from active interfaces. Native clients validate every origin and probe pinned HTTPS health endpoints before choosing one; enrollment and signed RPC bodies are submitted once, after discovery. Mesh providers need no dedicated adapter because their interfaces expose normal routed IP addresses. Interface discovery does not override VPN access policies or firewall rules.
+
+## Phone-approved enrollment
+
+`xlatch enrollment-bootstrap DEVICE_ID` issues a five-minute token for an explicitly selected existing phone. In the app, Server → Device approvals accepts this token and registers a separate biometric-protected P-256 key. Enabling protection invalidates older QR tickets. Once enabled, `/v1/pair` returns a device with `enrollment_status: "pending"`; it has no grants until approved. Existing clients stay active without becoming approvers.
+
+Enrollment operations use the existing signed `/v1/rpc` envelope with `{"op":"enrollment","request":{"action":"status"}}`. Status returns `server_id`, `enabled`, `is_approver`, `device_status`, and optional exact `pending_payload`. Pending devices can only fetch their own status. Other actions:
+
+- `enable`: `token`, base64 uncompressed SEC1 `public_key`, and base64 DER ECDSA-SHA256 `signature`.
+- `pending`: approver-only list of immutable JSON payload strings, each valid for ten minutes.
+- `decide`: candidate `id`, boolean `approve`, and base64 DER `signature`; only an enrolled approver can decide.
+
+Enable signing bytes are `xlatch.enrollment.enable.v1\n{server_id}\n{device_id}\n{token}\n{public_key}`. Decision bytes are `xlatch.enrollment.decision.v1\n{approve|reject}\n{exact_payload}`. Sign these UTF-8 bytes with ECDSA-SHA256, not a pre-hashed message. Do not reserialize the review payload before signing. Its SHA-256 prefix (six bytes as twelve uppercase hexadecimal digits) is the comparison code shown on both devices. Always render and validate the same payload being signed.
+
+This is enrollment protection, not yet phone approval for capability activation, grant changes or individual jobs. See ADR 0001 for the trust boundary and initial recovery limitations.

@@ -12,7 +12,9 @@ use serde_json::Value;
 /// # Errors
 /// Propagates validation, permission and storage errors.
 pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Value> {
+    store.authorize_request(owner, &request)?;
     match request {
+        Request::Enrollment { request } => crate::enrollment::dispatch(store, owner, request),
         Request::Discover => Ok(serde_json::to_value(store.discover(owner)?)?),
         Request::Invoke {
             capability_id,

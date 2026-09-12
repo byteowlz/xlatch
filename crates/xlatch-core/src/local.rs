@@ -15,6 +15,11 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Control {
+    /// Create a one-time first-approver bootstrap for an existing device.
+    EnrollmentBootstrap {
+        /// Device explicitly selected by the operator.
+        device: String,
+    },
     /// Propose a capability; this does not activate it.
     Register {
         /// Manifest to validate.
@@ -114,6 +119,9 @@ async fn handle(
         let control: Control = serde_json::from_slice(&buffer)?;
         let mut store = Store::open(dir)?;
         match control {
+            Control::EnrollmentBootstrap { device } => {
+                Ok(serde_json::to_value(store.enrollment_bootstrap(&device)?)?)
+            }
             Control::Register { manifest } => Ok(serde_json::to_value(store.register(&manifest)?)?),
             Control::Approve {
                 id,

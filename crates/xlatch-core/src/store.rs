@@ -49,8 +49,14 @@ impl Store {
         let conn = Connection::open(dir.join("xlatch.sqlite3"))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 1, "database was created by a newer xlatch");
-        conn.execute_batch(include_str!("../migrations/001.sql"))?;
+        ensure!(version <= 2, "database was created by a newer xlatch");
+        conn.pragma_update(None, "foreign_keys", true)?;
+        if version == 0 {
+            conn.execute_batch(include_str!("../migrations/001.sql"))?;
+        }
+        if version < 2 {
+            conn.execute_batch(include_str!("../migrations/002.sql"))?;
+        }
         Ok(Self { conn })
     }
 
@@ -120,7 +126,7 @@ impl Store {
     /// Rejects unknown or revoked devices and pending or stale capability revisions.
     pub fn grant(&self, device: &str, id: &str, revision: &str) -> Result<()> {
         let changed = self.conn.execute(
-            "INSERT INTO grants(device_id,capability_id,revision) SELECT d.id,c.id,c.revision FROM devices d JOIN capabilities c ON c.id=?2 WHERE d.id=?1 AND d.revoked=0 AND c.status='active' AND c.revision=?3 ON CONFLICT(device_id,capability_id) DO UPDATE SET revision=excluded.revision",
+            "INSERT INTO grants(device_id,capability_id,revision) SELECT d.id,c.id,c.revision FROM devices d JOIN capabilities c ON c.id=?2 WHERE d.id=?1 AND d.revoked=0 AND d.enrollment_status='active' AND c.status='active' AND c.revision=?3 ON CONFLICT(device_id,capability_id) DO UPDATE SET revision=excluded.revision",
             params![device, id, revision],
         )?;
         ensure!(
@@ -163,7 +169,7 @@ impl Store {
         if owner == "local" {
             return Ok(true);
         }
-        Ok(self.conn.query_row("SELECT count(*) FROM grants g JOIN devices d ON d.id=g.device_id WHERE g.device_id=?1 AND g.capability_id=?2 AND g.revision=?3 AND d.revoked=0", params![owner,id,revision], |r| r.get::<_, i64>(0))? > 0)
+        Ok(self.conn.query_row("SELECT count(*) FROM grants g JOIN devices d ON d.id=g.device_id WHERE g.device_id=?1 AND g.capability_id=?2 AND g.revision=?3 AND d.revoked=0 AND d.enrollment_status='active'", params![owner,id,revision], |r| r.get::<_, i64>(0))? > 0)
     }
 
     /// Atomically check the contract, deduplicate, and enqueue execution.

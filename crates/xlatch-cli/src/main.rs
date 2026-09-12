@@ -33,6 +33,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Issue a one-time code for enabling phone-approved enrollment in the app.
+    EnrollmentBootstrap {
+        /// Existing paired device that will become the first approver.
+        device: String,
+    },
     /// Run or manage the background user service.
     Service {
         #[command(subcommand)]
@@ -118,6 +123,7 @@ async fn main() -> Result<()> {
     let data_dir = cli.data_dir.map_or_else(default_data_dir, Ok)?;
     let mut wait_for = None;
     let control = match cli.command {
+        Command::EnrollmentBootstrap { device } => Control::EnrollmentBootstrap { device },
         Command::Service { command } => {
             return service_install::dispatch(data_dir, command).await;
         }
@@ -186,15 +192,7 @@ async fn main() -> Result<()> {
                     capability_id: id,
                     revision,
                     input: serde_json::from_slice(&std::fs::read(input)?)?,
-                    idempotency_key: key.unwrap_or_else(|| {
-                        format!(
-                            "cli-{}-{}",
-                            std::process::id(),
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map_or(0, |d| d.as_nanos())
-                        )
-                    }),
+                    idempotency_key: key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 },
             }
         }

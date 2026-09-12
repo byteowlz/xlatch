@@ -42,6 +42,28 @@ pub struct Enrollment {
     pub signature: String,
 }
 
+impl Enrollment {
+    fn verify(&self) -> Result<()> {
+        ensure!(
+            self.token.len() == 64
+                && !self.name.trim().is_empty()
+                && self.name.len() <= 120
+                && !self.name.contains('\n'),
+            "invalid enrollment"
+        );
+        verify(
+            &self.public_key,
+            &self.signature,
+            format!(
+                "xlatch.pair.v1\n{}\n{}\n{}",
+                self.token, self.public_key, self.name
+            )
+            .as_bytes(),
+        )?;
+        Ok(())
+    }
+}
+
 /// Authenticated device metadata, with no private keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -51,6 +73,8 @@ pub struct Device {
     pub name: String,
     /// Whether access has been revoked.
     pub revoked: bool,
+    /// Active or pending; pending devices cannot invoke capabilities.
+    pub enrollment_status: String,
 }
 
 /// Signed RPC envelope. Payload is the exact UTF-8 JSON string signed by the client.
@@ -159,22 +183,7 @@ impl Store {
     /// # Errors
     /// Rejects invalid, expired, consumed, or stale tickets and invalid signatures.
     pub fn enroll(&mut self, request: Enrollment) -> Result<Device> {
-        ensure!(
-            request.token.len() == 64
-                && !request.name.trim().is_empty()
-                && request.name.len() <= 120
-                && !request.name.contains('\n'),
-            "invalid enrollment"
-        );
-        verify(
-            &request.public_key,
-            &request.signature,
-            format!(
-                "xlatch.pair.v1\n{}\n{}\n{}",
-                request.token, request.public_key, request.name
-            )
-            .as_bytes(),
-        )?;
+        request.verify()?;
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -195,20 +204,35 @@ impl Store {
             )?;
             ensure!(valid == 1, "capability changed; request a new ticket");
         }
+        let guarded: bool = tx.query_row(
+            "SELECT enabled FROM enrollment_policy WHERE singleton=1",
+            [],
+            |r| r.get(0),
+        )?;
         let device = Device {
             id: uuid::Uuid::new_v4().to_string(),
             name: request.name,
             revoked: false,
+            enrollment_status: if guarded { "pending" } else { "active" }.into(),
         };
         tx.execute(
-            "INSERT INTO devices(id,name,public_key) VALUES(?1,?2,?3)",
-            params![device.id, device.name, request.public_key],
+            "INSERT INTO devices(id,name,public_key,enrollment_status) VALUES(?1,?2,?3,?4)",
+            params![
+                device.id,
+                device.name,
+                request.public_key,
+                device.enrollment_status
+            ],
         )?;
-        for (id, revision) in grants {
-            tx.execute(
-                "INSERT INTO grants VALUES(?1,?2,?3)",
-                params![device.id, id, revision],
-            )?;
+        if guarded {
+            crate::enrollment::queue(&tx, &device, &request.public_key, &grants)?;
+        } else {
+            for (id, revision) in grants {
+                tx.execute(
+                    "INSERT INTO grants VALUES(?1,?2,?3)",
+                    params![device.id, id, revision],
+                )?;
+            }
         }
         tx.execute("DELETE FROM tickets WHERE hash=?1", [hash])?;
         tx.commit()?;
@@ -264,13 +288,14 @@ impl Store {
     pub fn devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id,name,revoked FROM devices ORDER BY name")?;
+            .prepare("SELECT id,name,revoked,enrollment_status FROM devices ORDER BY name")?;
         Ok(stmt
             .query_map([], |r| {
                 Ok(Device {
                     id: r.get(0)?,
                     name: r.get(1)?,
                     revoked: r.get(2)?,
+                    enrollment_status: r.get(3)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?)
@@ -281,6 +306,10 @@ impl Store {
     /// # Errors
     /// Returns unknown-device or `SQLite` errors.
     pub fn revoke(&mut self, id: &str) -> Result<()> {
+        ensure!(
+            !crate::enrollment::is_approver(&self.conn, id)?,
+            "approver revocation requires a signed replacement; reset to a new server identity if the phone is lost"
+        );
         let tx = self.conn.transaction()?;
         ensure!(
             tx.execute("UPDATE devices SET revoked=1 WHERE id=?1", [id])? == 1,

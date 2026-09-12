@@ -1,0 +1,13 @@
+# Phone-signed enrollment approval
+
+An agent with the operator's credentials can currently issue pairing tickets. A QR secret alone therefore cannot establish owner consent once approval protection is enabled.
+
+Keep Ed25519 request keys separate from P-256 approval keys. After a trusted operator issues a five-minute bootstrap scoped to an existing device, that device registers its approval key with a domain-separated proof of possession. This is an explicit migration; existing devices retain their grants but do not become approvers. Bootstrap is unavailable once enabled, and outstanding pairing tickets are invalidated.
+
+Subsequent QR scans consume the ticket into a pending device with no grants. Its only permitted RPC is its own status. An existing approver reviews the immutable JSON payload, compares its 12-hex-character SHA-256 verification code with the candidate, and signs approve or reject. The frame binds the decision, server identity, policy version, candidate ID/key/name, exact revision grants, expiry, and nonce. A single SQLite transaction verifies the current approver, signature, expiry, candidate and current revisions, grants access, and consumes the request. Approval enrolls a client, not another approver.
+
+The iOS approval key uses Secure Enclave P-256 with privateKeyUsage and biometryCurrentSet, stored in an app-only Keychain access group; ordinary sharing never needs that key. Each signature uses a fresh authentication context. The server verifies ECDSA-SHA256, not a client-reported biometric-success field. This first implementation does not attest hardware provenance; trust comes from explicit first-device setup and the trusted native client's key policy. Android must implement the same protocol with a suitable Keystore key, not an iOS-specific signature format.
+
+Protection is opt-in. There is no unsigned disable, approver replacement, or CLI revocation of the approver. Initial recovery is deliberately a new server data directory and TLS identity, with explicit re-pairing and re-approval: do not restore old devices/grants into the replacement. Losing the approval phone or changing its enrolled biometrics can require that reset. Additional approvers, signed replacement and offline recovery credentials remain follow-up work.
+
+This protocol does not protect a user-owned daemon against another process running as that user. Protected installation needs an independently owned verifier, state, binary and parent directories, plus an executor that never runs agent-provided commands with the verifier's identity. Do not advertise same-user agent resistance until that boundary is implemented and tested.
