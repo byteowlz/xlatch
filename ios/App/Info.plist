@@ -28,7 +28,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Scan a pairing code from your xlatch server.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Use Face ID to sign device enrollment approvals.</string>
+	<string>Use Face ID to approve devices, actions and access grants.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your paired xlatch server to send actions and retrieve results.</string>
 	<key>UIApplicationSceneManifest</key>

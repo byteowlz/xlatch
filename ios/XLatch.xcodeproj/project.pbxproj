@@ -11,7 +11,9 @@
 		38C503C7F48FBE6339E2E224 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8742A5AD18C6B86070591B6E /* Models.swift */; };
 		448FCE6DA5D3841C1FD57E23 /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
 		8C7AAD581FD2AC5454B83505 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 238291A4FB72E6D55381C5DD /* Assets.xcassets */; };
+		8FE87093D7FDE27C05A1C7FE /* CapabilityApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */; };
 		91BF9029C23B69CFB1777451 /* EnrollmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAB3DB88428F9B784667BA3 /* EnrollmentTests.swift */; };
+		969A844B809996F45F671075 /* CapabilityApprovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0723883B78480ECA4505859 /* CapabilityApprovalTests.swift */; };
 		9B3097EB92218A416B5A501D /* XLatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */; };
 		9E63F338EB46242BFC6584D2 /* ProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB2F33E3B5E54F233E06AD5 /* ProtocolTests.swift */; };
 		A9427803D6DF86018844E660 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8742A5AD18C6B86070591B6E /* Models.swift */; };
@@ -69,8 +71,10 @@
 		8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveServerTests.swift; sourceTree = "<group>"; };
 		998A46FC0928DECBD3CBDB9D /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
 		A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XLatchApp.swift; sourceTree = "<group>"; };
+		A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApproval.swift; sourceTree = "<group>"; };
 		BBAA014B97E7AF24B34A14A6 /* XLatchTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = XLatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentApproval.swift; sourceTree = "<group>"; };
+		C0723883B78480ECA4505859 /* CapabilityApprovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApprovalTests.swift; sourceTree = "<group>"; };
 		D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F4C60EE037F5758DB6F33373 /* XLatchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XLatchShare.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -79,6 +83,7 @@
 		65C24F8F4CD97390A4407860 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				C0723883B78480ECA4505859 /* CapabilityApprovalTests.swift */,
 				0FAB3DB88428F9B784667BA3 /* EnrollmentTests.swift */,
 				8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */,
 				7CB2F33E3B5E54F233E06AD5 /* ProtocolTests.swift */,
@@ -90,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				238291A4FB72E6D55381C5DD /* Assets.xcassets */,
+				A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */,
 				BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */,
 				54CAFB5D36A2AA95E589C8C7 /* Info.plist */,
 				998A46FC0928DECBD3CBDB9D /* QRScanner.swift */,
@@ -268,6 +274,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				969A844B809996F45F671075 /* CapabilityApprovalTests.swift in Sources */,
 				91BF9029C23B69CFB1777451 /* EnrollmentTests.swift in Sources */,
 				C5A82AA26AD29686AF854D1B /* LiveServerTests.swift in Sources */,
 				9E63F338EB46242BFC6584D2 /* ProtocolTests.swift in Sources */,
@@ -278,6 +285,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8FE87093D7FDE27C05A1C7FE /* CapabilityApproval.swift in Sources */,
 				448FCE6DA5D3841C1FD57E23 /* Client.swift in Sources */,
 				F751373C1D48E2DE7B78CD70 /* EnrollmentApproval.swift in Sources */,
 				A9427803D6DF86018844E660 /* Models.swift in Sources */,

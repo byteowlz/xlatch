@@ -109,11 +109,17 @@ enum ApprovalKey {
             return ["public_key": publicKey, "signature": try key.signature(for: bytes).derRepresentation.base64EncodedString()]
         }.value
     }
-    static func sign(connection: Connection, pending: PendingEnrollment, approve: Bool) async throws -> String {
+    static func signCapability(connection: Connection, pending: PendingCapabilityApproval, approve: Bool) async throws -> String {
+        try await signBytes(connection: connection, bytes: pending.signingBytes(approve: approve), reason: approve ? "Approve this action and device access in xlatch" : "Reject this action request in xlatch")
+    }
+    private static func signBytes(connection: Connection, bytes: Data, reason: String) async throws -> String {
         try await Task.detached {
-            let key = try key(connection, create: false, reason: approve ? "Approve this device in xlatch" : "Reject this device in xlatch")
-            return try key.signature(for: pending.signingBytes(approve: approve)).derRepresentation.base64EncodedString()
+            let key = try key(connection, create: false, reason: reason)
+            return try key.signature(for: bytes).derRepresentation.base64EncodedString()
         }.value
+    }
+    static func sign(connection: Connection, pending: PendingEnrollment, approve: Bool) async throws -> String {
+        try await signBytes(connection: connection, bytes: pending.signingBytes(approve: approve), reason: approve ? "Approve this device in xlatch" : "Reject this device in xlatch")
     }
 }
 

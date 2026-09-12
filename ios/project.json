@@ -53,7 +53,7 @@
             "UIInterfaceOrientationLandscapeLeft",
             "UIInterfaceOrientationLandscapeRight"
           ],
-          "NSFaceIDUsageDescription": "Use Face ID to sign device enrollment approvals.",
+          "NSFaceIDUsageDescription": "Use Face ID to approve devices, actions and access grants.",
           "XLatchApprovalKeychainGroup": "$(AppIdentifierPrefix)com.byteowlz.xlatch.approval"
         }
       },

@@ -382,6 +382,9 @@ struct SettingsView: View {
                 Section { Button("Forget this server", role: .destructive) { confirmDisconnect = true } } footer: { Text("This removes the key from your phone. Use xlatch revoke on the server to revoke the device there too.") }
                 Section {
                     NavigationLink("Device approvals") { EnrollmentSettingsView() }
+                    if model.enrollmentStatus?.is_approver == true {
+                        NavigationLink("Action approvals") { CapabilityApprovalListView() }
+                    }
                     NavigationLink("Update server identity") { ServerIdentityUpdateView() }
                 }
             }.navigationTitle("Server").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
