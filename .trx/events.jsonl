@@ -58,3 +58,6 @@
 {"id":"evt_8ssjz824","issue_id":"xltch-yp4v","action":"updated","timestamp":"2026-09-12T12:53:41.679527Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
 {"id":"evt_82qcksdj","issue_id":"xltch-wza3","action":"created","timestamp":"2026-09-12T13:32:14.646604Z"}
 {"id":"evt_qgkvj67n","issue_id":"xltch-8bh2","action":"created","timestamp":"2026-09-12T13:32:14.666471Z"}
+{"id":"evt_ghr6pdmm","issue_id":"xltch-y8q6","action":"verification_added","timestamp":"2026-09-12T13:41:51.368014Z","note":"vrun-gw1h: passed"}
+{"id":"evt_nej732f2","issue_id":"xltch-yp4v","action":"verification_added","timestamp":"2026-09-12T13:41:51.383322Z","note":"vrun-4erb: passed"}
+{"id":"evt_zm6st27x","issue_id":"xltch-y8q6","action":"verification_added","timestamp":"2026-09-12T13:44:36.190796Z","note":"vrun-chag: passed"}
