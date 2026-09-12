@@ -17,6 +17,7 @@ final class ShareViewController: UIViewController {
 @MainActor final class ShareModel: ObservableObject {
     @Published var input: ShareInput?
     @Published var capabilities: [Capability] = APIClient.cachedCapabilities()
+    @Published var disabledActionIDs: Set<String> = []
     @Published var loading = true
     @Published var sending: String?
     @Published var sent = false
@@ -31,6 +32,7 @@ final class ShareViewController: UIViewController {
             guard let items = context?.inputItems as? [NSExtensionItem], let provider = items.flatMap({ $0.attachments ?? [] }).first else { throw ClientError.message("No shareable content was provided.") }
             input = try await Self.load(provider)
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
+            disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
             capabilities = try await APIClient(connection: connection).capabilities()
         } catch { self.error = error.localizedDescription }
     }
@@ -87,8 +89,8 @@ struct ShareView: View {
                         if let error = model.error { Section { Text(error).foregroundStyle(.red); Button("Try connection again") { Task { await model.load() } } } }
                         if model.loading { ProgressView("Finding actions…") }
                         if let input = model.input {
-                            let matches = model.capabilities.filter { $0.accepts(input.mime) }
-                            if matches.isEmpty && !model.loading { ContentUnavailableView("No compatible actions", systemImage: "bolt.slash", description: Text("Grant this device an action that accepts \(input.mime).")) }
+                            let matches = model.capabilities.filter { $0.accepts(input.mime) && !model.disabledActionIDs.contains($0.id) }
+                            if matches.isEmpty && !model.loading { ContentUnavailableView("No compatible actions", systemImage: "bolt.slash", description: Text("Enable or grant this device an action that accepts \(input.mime).")) }
                             Section("Choose an action") {
                                 ForEach(matches) { capability in
                                     Button { Task { await model.send(capability) } } label: {

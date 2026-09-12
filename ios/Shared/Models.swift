@@ -145,3 +145,13 @@ struct ShareInput {
         return ShareInput(mime: mime, label: name, payload: ["mime_type": mime, "file": ["name": name, "mime_type": mime, "data_base64": data.base64EncodedString()]])
     }
 }
+
+
+enum ShareActionPreferences {
+    static func disabled(deviceID: String) -> Set<String> {
+        Set(UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.stringArray(forKey: "disabled-actions.\(deviceID)") ?? [])
+    }
+    static func save(_ disabled: Set<String>, deviceID: String) {
+        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(disabled.sorted(), forKey: "disabled-actions.\(deviceID)")
+    }
+}

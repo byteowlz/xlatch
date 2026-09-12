@@ -60,6 +60,7 @@ enum CredentialStore {
 
 final class APIClient {
     let connection: Connection
+    private(set) var lastSuccessfulURL: String?
     private let session: URLSession
     init(connection: Connection) throws {
         guard let url = URL(string: connection.url), url.scheme == "https" else { throw ClientError.message("Invalid server address.") }
@@ -143,7 +144,9 @@ final class APIClient {
                 throw ClientError.message("Your server is unreachable at \(addresses.joined(separator: ", ")). Check your network or mesh VPN connection.")
             }
             let selected = Connection(url: origin, pin: connection.pin, deviceID: connection.deviceID, privateKey: connection.privateKey)
-            return try await APIClient(connection: selected).post(path, body: body)
+            let response: T = try await APIClient(connection: selected).post(path, body: body)
+            lastSuccessfulURL = origin
+            return response
         }
         guard let base = URL(string: connection.url) else { throw ClientError.message("Invalid server address.") }
         var request = URLRequest(url: base.appendingPathComponent(path))
@@ -155,6 +158,8 @@ final class APIClient {
             let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
             throw ClientError.message(message ?? "The server could not accept this request. Try again when it is reachable.")
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        let decoded = try JSONDecoder().decode(T.self, from: data)
+        lastSuccessfulURL = connection.url
+        return decoded
     }
 }

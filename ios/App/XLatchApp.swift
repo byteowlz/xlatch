@@ -1,5 +1,8 @@
 import SwiftUI
 import UserNotifications
+import CoreSpotlight
+import UniformTypeIdentifiers
+import OSLog
 
 @MainActor final class AppModel: ObservableObject {
     @Published var connection: Connection?
@@ -8,8 +11,16 @@ import UserNotifications
     @Published var error: String?
     @Published var refreshing = false
     @Published var lastUpdated: Date?
+    @Published var activeServerURL: String?
+    @Published var disabledActionIDs: Set<String> = []
+    var enabledCapabilities: [Capability] { capabilities.filter { !disabledActionIDs.contains($0.id) } }
+    func setAction(_ id: String, enabled: Bool) {
+        guard let connection else { return }
+        if enabled { disabledActionIDs.remove(id) } else { disabledActionIDs.insert(id) }
+        ShareActionPreferences.save(disabledActionIDs, deviceID: connection.deviceID)
+    }
     init() {
-        do { connection = try CredentialStore.load(); capabilities = APIClient.cachedCapabilities() }
+        do { connection = try CredentialStore.load(); capabilities = APIClient.cachedCapabilities(); if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) } }
         catch { self.error = error.localizedDescription }
     }
     func client() throws -> APIClient {
@@ -31,16 +42,17 @@ import UserNotifications
                 content.sound = .default
                 try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: job.id, content: content, trigger: nil))
             }
-            jobs = recent; error = nil; lastUpdated = Date()
+            jobs = recent; activeServerURL = client.lastSuccessfulURL; error = nil; lastUpdated = Date()
         } catch { self.error = error.localizedDescription }
     }
     func pair(_ ticket: PairingTicket) async throws {
         connection = try await APIClient.pair(ticket, name: UIDevice.current.name)
-        capabilities = []; jobs = []
+        capabilities = []; jobs = []; activeServerURL = nil
+        if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }
         await refresh()
     }
     func disconnect() {
-        do { try CredentialStore.clear(); connection = nil; capabilities = []; jobs = []; error = nil }
+        do { try CredentialStore.clear(); connection = nil; capabilities = []; jobs = []; activeServerURL = nil; lastUpdated = nil; error = nil }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -62,6 +74,20 @@ import UserNotifications
             }
             .environmentObject(model)
             .tint(Color(red: 0.12, green: 0.43, blue: 0.34))
+            .onContinueUserActivity(CSSearchableItemActionType) { _ in
+                Task { await model.refresh() }
+            }
+            .task {
+                let attributes = CSSearchableItemAttributeSet(contentType: .text)
+                attributes.title = "xlatch · CrossLatch"
+                attributes.alternateNames = ["xlatch", "CrossLatch"]
+                attributes.keywords = ["xlatch", "crosslatch"]
+                attributes.contentDescription = "Open your shared actions and results."
+                let item = CSSearchableItem(uniqueIdentifier: "open-xlatch", domainIdentifier: "com.byteowlz.xlatch", attributeSet: attributes)
+                item.expirationDate = .distantFuture
+                do { try await CSSearchableIndex.default().indexSearchableItems([item]) }
+                catch { Logger(subsystem: "com.byteowlz.xlatch", category: "search").error("Could not index app search entry: \(error.localizedDescription)") }
+            }
             .task {
                 while !Task.isCancelled {
                     if scenePhase == .active { await model.refresh() }
@@ -128,11 +154,11 @@ struct ActionsView: View {
         NavigationStack {
             List {
                 if let error = model.error { Section { Label(error, systemImage: "wifi.exclamationmark").foregroundStyle(.secondary) } }
-                if model.capabilities.isEmpty {
-                    ContentUnavailableView("No actions yet", systemImage: "bolt.slash", description: Text("Approve a capability and pair with permission to use it on this device."))
+                if model.enabledCapabilities.isEmpty {
+                    ContentUnavailableView("No actions yet", systemImage: "bolt.slash", description: Text("Enable an action in Server settings, or grant this phone a new server action."))
                 } else {
                     Section {
-                        ForEach(model.capabilities) { capability in
+                        ForEach(model.enabledCapabilities) { capability in
                             NavigationLink { ComposeView(capability: capability) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(capability.manifest.title).font(.headline)
@@ -285,14 +311,57 @@ struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @State private var notificationStatus: String?
     @State private var confirmDisconnect = false
+    private var addresses: [String] {
+        guard let connection = model.connection else { return [] }
+        return ([connection.url] + (connection.urls ?? [])).reduce(into: []) { result, address in
+            if !result.contains(address) { result.append(address) }
+        }
+    }
     var body: some View {
         NavigationStack {
             Form {
-                Section("Paired server") {
-                    Text(model.connection?.url ?? "Not paired").textSelection(.enabled)
+                Section {
+                    LabeledContent("Address selection", value: "Automatic")
+                    if let address = model.activeServerURL {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(model.error == nil ? "Connected using" : "Last connected using", systemImage: model.error == nil ? "checkmark.circle.fill" : "clock")
+                                .font(.subheadline).foregroundStyle(model.error == nil ? .green : .secondary)
+                            Text(address).textSelection(.enabled)
+                        }
+                    } else {
+                        Text(model.refreshing ? "Checking connection…" : "Connection not yet verified").foregroundStyle(.secondary)
+                    }
                     if let date = model.lastUpdated { LabeledContent("Last reached") { Text(date, style: .time) } }
-                    Button("Refresh connection") { Task { await model.refresh() } }
+                    Button(model.refreshing ? "Checking…" : "Check connection now") { Task { await model.refresh() } }.disabled(model.refreshing)
                     if let error = model.error { Text(error).foregroundStyle(.red) }
+                } header: { Text("Connection") } footer: {
+                    Text("xlatch uses the first reachable address with your server’s verified identity. It switches automatically when your network changes; your tailnet or VPN must be connected to use its address.")
+                }
+                Section {
+                    ForEach(addresses, id: \.self) { address in
+                        HStack(alignment: .top) {
+                            Text(address).textSelection(.enabled)
+                            Spacer()
+                            if address == model.activeServerURL && model.error == nil {
+                                Text("In use").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: { Text("Available server addresses") } footer: {
+                    Text(addresses.count > 1 ? "All addresses were saved during pairing. The LAN address may be faster at home; another saved address can work when you’re away." : "Only one address was saved. Pair again with a server advertising both LAN and tailnet addresses to enable switching between them.")
+                }
+                Section {
+                    ForEach(model.capabilities) { capability in
+                        Toggle(isOn: Binding(get: { !model.disabledActionIDs.contains(capability.id) }, set: { model.setAction(capability.id, enabled: $0) })) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(capability.manifest.title)
+                                Text(capability.manifest.description).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if model.capabilities.isEmpty { Text("No actions granted to this phone yet.").foregroundStyle(.secondary) }
+                } header: { Text("Actions on this phone") } footer: {
+                    Text("Enabled actions appear in the Actions tab and, for compatible content, in the share sheet. Turning one off does not revoke its server permission or affect other devices. New approved and granted actions appear automatically.")
                 }
                 Section("Notifications") {
                     Button("Enable result notifications") {
@@ -304,7 +373,7 @@ struct SettingsView: View {
                     if let notificationStatus { Text(notificationStatus).font(.footnote) }
                     Text("This version checks results while the app is open and when you return. Background push notifications are not connected yet.").font(.footnote).foregroundStyle(.secondary)
                 }
-                Section { Button("Forget this server", role: .destructive) { confirmDisconnect = true } } footer: { Text("This removes the key from your phone. Use xlatch-cli revoke on the server to revoke the device there too.") }
+                Section { Button("Forget this server", role: .destructive) { confirmDisconnect = true } } footer: { Text("This removes the key from your phone. Use xlatch revoke on the server to revoke the device there too.") }
             }.navigationTitle("Server").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
         }
     }
