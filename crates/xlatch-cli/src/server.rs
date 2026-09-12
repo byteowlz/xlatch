@@ -55,6 +55,7 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
         .open(data_dir.join("daemon.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock)
         .context("another daemon already uses this data directory")?;
+    let notifications = crate::notifications::prepare(&data_dir)?;
     store.recover()?;
     let (tls, pin) = tls_config(
         &data_dir,
@@ -87,6 +88,10 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     anyhow::bail!("v0 local registration currently requires Unix; Windows support is tracked");
     for _ in 0..cli.workers {
         tasks.spawn(worker::run(data_dir.clone()));
+    }
+    if let Some(notifications) = notifications {
+        tasks.spawn(notifications.run(data_dir.clone()));
+        eprintln!("Apprise notifications enabled (generic job status only).");
     }
     let handle = axum_server::Handle::new();
     let server = axum_server::from_tcp_rustls(listener, tls)?

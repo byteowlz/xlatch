@@ -2,6 +2,7 @@
 
 mod destination;
 mod network;
+mod notifications;
 mod pairing;
 mod server;
 mod service_install;
