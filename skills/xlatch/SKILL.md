@@ -7,7 +7,7 @@ description: Build, register, grant, and invoke xlatch actions for phone share s
 
 xlatch is a capability registry and durable job service. The iOS client discovers actions dynamically; a new action normally needs a server manifest and execution binding, not an app release. Read the installed command's `--help` before relying on newer features.
 
-## Local operator workflow
+## User-mode operator workflow
 
 Use `xlatch service run` for foreground execution and `xlatch service start|stop|restart|enable|disable|status` for an installed user service. `--port` changes the port. `--listen` selects the interface; the default accepts network clients and advertises discovered LAN/mesh addresses. `--public-url` supplies an explicit HTTPS origin. Use the same global `--data-dir` for server and operator commands.
 
@@ -21,7 +21,17 @@ Use `xlatch service run` for foreground execution and `xlatch service start|stop
 
 Use a stable idempotency key when retrying the same logical invocation. A timeout is not proof that the job failed. Retrieve its status before starting another operation with a new key.
 
-## Save destinations
+## Protected mode
+
+Check the service mode before choosing an integration workflow. User mode gives same-UID local agents operator authority. Protected mode runs the broker under a dedicated service account and executes host actions through a separate, unprivileged executor account. Broker state, trusted keys, binaries and service configuration must remain inaccessible for modification by agents; biometric approval alone does not protect a user-owned daemon.
+
+Use the global `--control-dir PATH` to address an installed protected service. Its local transport accepts only the configured executor OS identity. It allows identity/discovery, pending registration, pairing requests, device listing and executor operations. Local approval, grant changes, revocation and invocation/job shortcuts are denied. Use the existing signed device API for authorized invocations and result retrieval; do not invent agent credential support.
+
+When phone enrollment protection is enabled, QR pairing creates a pending device with no grants. An existing approver reviews and signs the exact enrollment with its biometric-protected key. Enrollment approval does not approve capability revisions or promote the new device to an approver. Phone-signed capability activation and grant changes are not implemented yet, so a newly registered integration cannot currently be activated through protected mode. Report that limitation; do not silently switch modes, edit broker state or bypass approval.
+
+Protected installation is available for macOS/Linux through `xlatch service enable --protected --executor-user NAME --dry-run`. Actual migration requires administrator access and the installation fingerprint shown by the trusted phone. Treat installation and trust migration as a separate operator task, not a prerequisite an integration agent performs automatically. Check the installed command's help for its current requirements.
+
+## Save destinations (user mode)
 
 ```sh
 xlatch destination add incoming
@@ -54,7 +64,7 @@ Example for a trusted executable that reads one JSON document on stdin and emits
 }
 ```
 
-Inspect the tool before binding it. Use an absolute executable, fixed arguments and its real SHA-256; shared input belongs on stdin, never interpolated into a shell command. Current commands run as the daemon's OS user with a cleared environment and fixed PATH; they are trusted host execution, not a sandbox. Do not assume inherited API keys or a credential resolver.
+Inspect the tool before binding it. Use an absolute executable, fixed arguments and its real SHA-256; shared input belongs on stdin, never interpolated into a shell command. Commands run as the daemon's OS user in user mode and as the separate executor user in protected mode, with a cleared environment and fixed PATH. They are trusted host execution, not a sandbox. Resolve executable and destination access for that execution identity; registration validates the manifest declaratively and does not prove host access. Do not assume inherited API keys or a credential resolver.
 
 Schemas must be inline/self-contained: remote references are rejected. Native share input is `{text,mime_type}` or `{file:{name,mime_type,data_base64},mime_type}`. Current file size is limited to 4 MiB, requests to 8 MiB and results to 6 MiB. A result containing `text` renders conveniently in the app; a `file` object can be retrieved/shared. Advertise only MIME types the adapter really handles.
 
@@ -62,7 +72,7 @@ The phone shows only active, granted revisions compatible with shared content. A
 
 ## Integration boundaries
 
-JSON is the protocol and CLI interchange format; application configuration uses JSON or TOML. MCP is an adapter (`xlatch-mcp`) over the same local service, not the core protocol. The private Unix socket and same-UID agents have local-operator authority; do not expose that socket to an untrusted app or tenant.
+JSON is the protocol and CLI interchange format; application configuration uses JSON or TOML. MCP is an adapter (`xlatch-mcp`) over the same local service, not the core protocol. In user mode, the private Unix socket gives same-UID agents local-operator authority; do not expose it to an untrusted app or tenant. Protected mode applies the narrower transport permissions described above.
 
 Keep mobile credentials and request signatures in the existing native client implementation. Address fallback must retain the QR certificate pin and hostname validation; do not bypass TLS or replay an uncertain side-effecting POST across candidates.
 
