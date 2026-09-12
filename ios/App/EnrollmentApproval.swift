@@ -57,7 +57,7 @@ enum ApprovalKey {
         }
         return [kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: "com.byteowlz.xlatch.approval",
-                kSecAttrAccount as String: "\(connection.pin):\(connection.deviceID)",
+                kSecAttrAccount as String: connection.approvalKeyID ?? "\(connection.pin):\(connection.deviceID)",
                 kSecAttrAccessGroup as String: group]
     }
     private static func key(_ connection: Connection, create: Bool, reason: String) throws -> SecureEnclave.P256.Signing.PrivateKey {
@@ -90,6 +90,17 @@ enum ApprovalKey {
         guard saved == errSecSuccess else { throw ClientError.message("Could not save the approval key (\(saved)).") }
         return key
     }
+    static func installationFingerprint(connection: Connection) async throws -> String {
+        try await Task.detached {
+            guard let server = connection.serverID else { throw ClientError.message("Refresh the server connection first.") }
+            let key = try key(connection, create: false, reason: "Verify your xlatch protected installation")
+            let requestKey = try Curve25519.Signing.PrivateKey(rawRepresentation: connection.privateKey).publicKey.rawRepresentation.base64EncodedString()
+            let approvalKey = key.publicKey.x963Representation.base64EncodedString()
+            let frame = Data("xlatch.protected.anchor.v1\n\(server)\n\(connection.deviceID)\n\(requestKey)\n\(approvalKey)".utf8)
+            _ = try key.signature(for: frame)
+            return SHA256.hash(data: frame).map { String(format: "%02x", $0) }.joined()
+        }.value
+    }
     static func enable(connection: Connection, serverID: String, token: String) async throws -> [String: String] {
         try await Task.detached {
             let key = try key(connection, create: true, reason: "Protect new device enrollment in xlatch")
@@ -108,6 +119,8 @@ enum ApprovalKey {
 
 struct EnrollmentSettingsView: View {
     @EnvironmentObject var model: AppModel
+    @State private var scanningSetup = false
+    @State private var fingerprint: String?
     @State private var token = ""
     @State private var busy = false
     @State private var error: String?
@@ -122,12 +135,25 @@ struct EnrollmentSettingsView: View {
                     Section("Enable phone approval") {
                         Text("On your server, run:")
                         Text("xlatch enrollment-bootstrap \(connection.deviceID)").font(.caption.monospaced()).textSelection(.enabled)
-                        SecureField("Paste the one-time token", text: $token).autocorrectionDisabled().textInputAutocapitalization(.never)
+                        Button("Scan setup code") { scanningSetup = true }.disabled(busy)
+                        SecureField("Or paste the one-time token", text: $token).autocorrectionDisabled().textInputAutocapitalization(.never)
                         Text("Keep this phone and its biometrics available. Changing enrolled biometrics invalidates its approval key. Recovery currently requires setting up a new server identity and pairing all devices again.").font(.footnote).foregroundStyle(.secondary)
                         Button("Enable with Face ID or Touch ID") { enable(status: status, connection: connection) }.disabled(busy || token.count != 64)
                     }
                 }
-                if status.is_approver {
+                if status.is_approver, let connection = model.connection {
+                    Section("Protected installation") {
+                        Button("Verify installation fingerprint") {
+                            busy = true; error = nil
+                            Task {
+                                defer { busy = false }
+                                do { fingerprint = try await ApprovalKey.installationFingerprint(connection: connection) }
+                                catch { self.error = error.localizedDescription }
+                            }
+                        }.disabled(busy)
+                        if let fingerprint { Text(fingerprint).font(.caption.monospaced()).textSelection(.enabled) }
+                        Text("Supply this fingerprint to the administrator installer. It checks your phone’s actual keys against the imported approval record.").font(.footnote).foregroundStyle(.secondary)
+                    }
                     Section("Awaiting your approval") {
                         if model.pendingEnrollments.isEmpty { Text("No pending devices").foregroundStyle(.secondary) }
                         ForEach(model.pendingEnrollments) { pending in
@@ -142,6 +168,15 @@ struct EnrollmentSettingsView: View {
             }
             if let error { Section { Text(error).foregroundStyle(.red) } }
         }.navigationTitle("Device approvals")
+            .sheet(isPresented: $scanningSetup) { QRScanner { value in
+                scanningSetup = false
+                do {
+                    let code = try JSONDecoder().decode(ApprovalBootstrap.self, from: Data(value.utf8))
+                    guard let connection = model.connection, let server = model.enrollmentStatus?.server_id else { throw ClientError.message("Refresh the server connection first.") }
+                    token = try code.validatedToken(deviceID: connection.deviceID, serverID: server)
+                    error = nil
+                } catch { self.error = error.localizedDescription }
+            } }
     }
     private func enable(status: EnrollmentStatus, connection: Connection) {
         busy = true; error = nil
@@ -225,6 +260,15 @@ struct PendingEnrollmentView: View {
 extension AppModel {
     func refreshEnrollment(using client: APIClient) async throws -> Bool {
             let status: EnrollmentStatus = try await client.rpc(["op": "enrollment", "request": ["action": "status"]])
+            if var remembered = connection {
+                if let serverID = remembered.serverID {
+                    guard serverID == status.server_id else { throw ClientError.message("Server identity changed. Review this server before pairing again.") }
+                } else {
+                    remembered.serverID = status.server_id
+                    try CredentialStore.save(remembered)
+                    connection = remembered
+                }
+            }
             enrollmentStatus = status
             ownPendingEnrollment = try status.pending_payload.map { try PendingEnrollment($0, serverID: status.server_id) }
             if status.device_status != "active" {
@@ -237,5 +281,20 @@ extension AppModel {
                 pendingEnrollments = try payloads.map { try PendingEnrollment($0, serverID: status.server_id) }
             } else { pendingEnrollments = [] }
         return true
+    }
+}
+
+struct ApprovalBootstrap: Decodable {
+    let purpose: String
+    let server_id: String
+    let device_id: String
+    let token: String
+    let expires_at: Int64
+    func validatedToken(deviceID: String, serverID: String) throws -> String {
+        guard purpose == "xlatch.approval-bootstrap", server_id == serverID, device_id == deviceID,
+              expires_at >= Int64(Date().timeIntervalSince1970), token.count == 64 else {
+            throw ClientError.message("Setup code is expired or belongs to another phone or server.")
+        }
+        return token
     }
 }

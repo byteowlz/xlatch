@@ -89,6 +89,7 @@ final class APIClient {
         let response: Enrolled = try await client.post("v1/pair", body: ["token": ticket.token, "name": name, "public_key": publicKey, "signature": signature])
         let saved = Connection(url: reachable, pin: ticket.pin, deviceID: response.id, privateKey: key.rawRepresentation, urls: ticket.candidateURLs)
         try CredentialStore.save(saved)
+        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.removeObject(forKey: "capabilities")
         return saved
     }
     private static func reachableOrigin(_ addresses: [String], pin: String) async -> String? {

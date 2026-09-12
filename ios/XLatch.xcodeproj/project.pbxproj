@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		30E9A392C39E0F421A9C63DC /* ServerIdentityUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */; };
 		38C503C7F48FBE6339E2E224 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8742A5AD18C6B86070591B6E /* Models.swift */; };
 		448FCE6DA5D3841C1FD57E23 /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
 		8C7AAD581FD2AC5454B83505 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 238291A4FB72E6D55381C5DD /* Assets.xcassets */; };
@@ -55,6 +56,7 @@
 
 /* Begin PBXFileReference section */
 		0FAB3DB88428F9B784667BA3 /* EnrollmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentTests.swift; sourceTree = "<group>"; };
+		1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerIdentityUpdate.swift; sourceTree = "<group>"; };
 		21A9E19665E7FEDE88483F33 /* Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Client.swift; sourceTree = "<group>"; };
 		238291A4FB72E6D55381C5DD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		45643BF6EBFA1FAD6DE32E2D /* XLatch.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = XLatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -91,6 +93,7 @@
 				BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */,
 				54CAFB5D36A2AA95E589C8C7 /* Info.plist */,
 				998A46FC0928DECBD3CBDB9D /* QRScanner.swift */,
+				1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */,
 				5A3C70216C28FBB17D9583D1 /* XLatch.entitlements */,
 				A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */,
 			);
@@ -279,6 +282,7 @@
 				F751373C1D48E2DE7B78CD70 /* EnrollmentApproval.swift in Sources */,
 				A9427803D6DF86018844E660 /* Models.swift in Sources */,
 				F368C8D24D321162745E9F1E /* QRScanner.swift in Sources */,
+				30E9A392C39E0F421A9C63DC /* ServerIdentityUpdate.swift in Sources */,
 				9B3097EB92218A416B5A501D /* XLatchApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

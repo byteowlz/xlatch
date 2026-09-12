@@ -380,7 +380,10 @@ struct SettingsView: View {
                     Text("This version checks results while the app is open and when you return. Background push notifications are not connected yet.").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section { Button("Forget this server", role: .destructive) { confirmDisconnect = true } } footer: { Text("This removes the key from your phone. Use xlatch revoke on the server to revoke the device there too.") }
-                Section { NavigationLink("Device approvals") { EnrollmentSettingsView() } }
+                Section {
+                    NavigationLink("Device approvals") { EnrollmentSettingsView() }
+                    NavigationLink("Update server identity") { ServerIdentityUpdateView() }
+                }
             }.navigationTitle("Server").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
         }
     }

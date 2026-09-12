@@ -27,3 +27,17 @@ final class EnrollmentTests: XCTestCase {
         } catch { XCTAssertTrue(error.localizedDescription.contains("physical device")) }
     }
 }
+
+final class IdentityMigrationTests: XCTestCase {
+    func testMigrationPreservesDeviceAndApprovalKeys() throws {
+        let old = Connection(url:"https://localhost:7443",pin:String(repeating:"a",count:64),deviceID:"phone",privateKey:Data(repeating:7,count:32),serverID:"server")
+        let ticket = ServerIdentityUpdate(purpose:"xlatch.identity",server_id:"server",url:"https://localhost:7443",urls:["https://localhost:7443"],pin:String(repeating:"b",count:64))
+        let migrated = try ticket.connection(replacing: old)
+        XCTAssertEqual(migrated.privateKey,old.privateKey)
+        XCTAssertEqual(migrated.deviceID,old.deviceID)
+        XCTAssertEqual(migrated.approvalKeyID,"\(old.pin):phone")
+        XCTAssertEqual(migrated.serverID,old.serverID)
+        let wrong = ServerIdentityUpdate(purpose:"xlatch.identity",server_id:"attacker",url:ticket.url,urls:ticket.urls,pin:ticket.pin)
+        XCTAssertThrowsError(try wrong.connection(replacing:old))
+    }
+}

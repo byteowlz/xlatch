@@ -121,6 +121,8 @@ struct Connection: Codable {
     let deviceID: String
     let privateKey: Data
     var urls: [String]? = nil
+    var serverID: String? = nil
+    var approvalKeyID: String? = nil
 }
 
 enum ClientError: LocalizedError {
