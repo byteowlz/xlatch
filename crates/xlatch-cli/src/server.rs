@@ -77,6 +77,7 @@ pub async fn run(data_dir: PathBuf, cli: Options) -> Result<()> {
         .with_state(state);
     let listener = std::net::TcpListener::bind(cli.listen)
         .with_context(|| format!("cannot listen on {}", cli.listen))?;
+    listener.set_nonblocking(true)?;
     let address = listener.local_addr()?;
     let mut tasks = tokio::task::JoinSet::new();
     #[cfg(unix)]
