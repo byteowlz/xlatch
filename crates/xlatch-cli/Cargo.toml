@@ -1,0 +1,41 @@
+[package]
+name = "xlatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Local operator CLI for CrossLatch"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "xlatch"
+path = "src/main.rs"
+
+[dependencies]
+xlatch-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tokio.workspace = true
+qrcode.workspace = true
+
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+axum-server.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+sha2.workspace = true
+base64.workspace = true
+url.workspace = true
+fs2.workspace = true

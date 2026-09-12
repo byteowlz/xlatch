@@ -1,0 +1,14 @@
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS capabilities(id TEXT PRIMARY KEY, revision TEXT NOT NULL, manifest TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','active')));
+CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, name TEXT NOT NULL, public_key TEXT NOT NULL UNIQUE, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS grants(device_id TEXT NOT NULL REFERENCES devices(id), capability_id TEXT NOT NULL, revision TEXT NOT NULL, PRIMARY KEY(device_id,capability_id));
+CREATE TABLE IF NOT EXISTS tickets(hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, grants TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS nonces(device_id TEXT NOT NULL REFERENCES devices(id), nonce TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(device_id,nonce));
+CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, capability_id TEXT NOT NULL, revision TEXT NOT NULL, manifest TEXT NOT NULL, owner TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')), input TEXT NOT NULL, result TEXT, error TEXT, idempotency_key TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(owner,idempotency_key));
+CREATE TABLE IF NOT EXISTS events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES jobs(id), owner TEXT NOT NULL, status TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS jobs_status ON jobs(status,created_at);
+CREATE INDEX IF NOT EXISTS events_owner ON events(owner,sequence);
+PRAGMA user_version=1;
+COMMIT;

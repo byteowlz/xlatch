@@ -1,0 +1,69 @@
+{
+  "id": "echo",
+  "title": "Return shared content",
+  "description": "Send text or a small file to your server and retrieve the same content. A safe way to test your connection.",
+  "accepts": [
+    "text/plain",
+    "text/uri-list",
+    "image/*",
+    "audio/*",
+    "video/*",
+    "application/octet-stream",
+    "application/pdf"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "maxLength": 100000
+      },
+      "mime_type": {
+        "type": "string"
+      },
+      "file": {
+        "type": "object",
+        "required": [
+          "name",
+          "mime_type",
+          "data_base64"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "data_base64": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "mime_type"
+    ],
+    "anyOf": [
+      {
+        "required": [
+          "text"
+        ]
+      },
+      {
+        "required": [
+          "file"
+        ]
+      }
+    ],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object"
+  },
+  "execution": {
+    "kind": "echo"
+  },
+  "timeout_seconds": 5
+}

@@ -1,0 +1,82 @@
+.pi/todos/
+/target
+.env 
+.DS_Store
+.vscode/
+
+# ---- ignr (detected: linux,macos,rust) @ 2026-07-27 ----
+
+# === linux ===
+# Linux
+*~
+# temporary files which can be created if a process still has a handle open of a deleted file
+.fuse_hidden*
+# KDE directory preferences
+.directory
+# Linux trash folder which might appear on any partition or disk
+.Trash-*
+# .nfs files are created when an open file is removed but is still being accessed
+.nfs*
+
+# === macos ===
+# macOS
+# General
+.DS_Store
+.AppleDouble
+.LSOverride
+# Icon must end with two \r
+Icon
+# Thumbnails
+._*
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# === rust ===
+# Rust
+# Generated files
+/target/
+**/*.rs.bk
+# Cargo.lock for libraries (uncomment if this is a library)
+# Cargo.lock
+# Debug files
+*.pdb
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+coverage/
+tarpaulin-report.html
+# Benchmarks
+criterion/
+# IDE/Editor specific (Rust)
+.cargo/
+!.cargo/config.toml
+
+# Native build state and local service credentials
+**/xcuserdata/
+DerivedData/
+*.xcresult/
+*.xctestrun
+server-key.pem
+server.pem
+server.der
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+control.sock

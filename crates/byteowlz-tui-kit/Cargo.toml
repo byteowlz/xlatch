@@ -1,0 +1,17 @@
+[package]
+name = "byteowlz-tui-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Shared TUI substrate for byteowlz tools: ANSI-token theme, action dispatch with key progressions, a command palette, and modern ratatui widgets."
+
+[lints]
+workspace = true
+
+[dependencies]
+ratatui.workspace = true
+crossterm.workspace = true
