@@ -175,3 +175,7 @@ release-tag VERSION:
 # Set up GitHub secrets for automated releases (requires byt)
 setup-secrets:
     byt secrets setup xlatch
+
+# Build and install the iOS app; optionally specify a device name or ID.
+install-iphone device="":
+    python3 scripts/install-iphone.py {{quote(device)}}
