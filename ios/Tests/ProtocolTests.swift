@@ -28,3 +28,15 @@ final class ProtocolTests: XCTestCase {
         XCTAssertTrue(key.publicKey.isValidSignature(signature, for: body))
     }
 }
+
+extension ProtocolTests {
+    func testConnectionErrorsDistinguishTrustFromConnectivity() {
+        let tls = APIClient.connectionFailure(URLError(.serverCertificateUntrusted))
+        let timeout = APIClient.connectionFailure(URLError(.timedOut))
+        let access = APIClient.connectionFailure(URLError(.notConnectedToInternet))
+        XCTAssertTrue(tls.contains("TLS verification failed"))
+        XCTAssertFalse(tls.contains("VPN"))
+        XCTAssertTrue(timeout.contains("Timed out"))
+        XCTAssertTrue(access.contains("Local Network permission"))
+    }
+}

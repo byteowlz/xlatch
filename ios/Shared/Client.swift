@@ -78,11 +78,7 @@ final class APIClient {
         let publicKey = key.publicKey.rawRepresentation.base64EncodedString()
         let message = "xlatch.pair.v1\n\(ticket.token)\n\(publicKey)\n\(name)"
         let signature = try key.signature(for: Data(message.utf8)).base64EncodedString()
-        let reachable = await reachableOrigin(ticket.candidateURLs, pin: ticket.pin)
-        guard let reachable else {
-            let addresses = ticket.candidateURLs.joined(separator: ", ")
-            throw ClientError.message("Could not reach your server at \(addresses). Connect this phone to the same network or mesh VPN, and check that xlatch is running and allowed through the server firewall.")
-        }
+        let reachable = try await reachableOrigin(ticket.candidateURLs, pin: ticket.pin)
         let connection = Connection(url: reachable, pin: ticket.pin, deviceID: "", privateKey: key.rawRepresentation)
         let client = try APIClient(connection: connection)
         struct Enrolled: Decodable { let id: String }
@@ -92,25 +88,48 @@ final class APIClient {
         UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.removeObject(forKey: "capabilities")
         return saved
     }
-    private static func reachableOrigin(_ addresses: [String], pin: String) async -> String? {
-        await withTaskGroup(of: String?.self) { group in
-            for address in Set(addresses) {
-                group.addTask {
-                    do {
-                        let client = try APIClient(connection: Connection(url: address, pin: pin, deviceID: "", privateKey: Data()))
-                        guard let base = URL(string: address) else { return nil }
-                        var request = URLRequest(url: base.appendingPathComponent("health"))
-                        request.timeoutInterval = 4
-                        let (_, response) = try await client.session.data(for: request)
-                        guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-                        return address
-                    } catch { return nil }
+    private enum OriginProbe {
+        case reachable(String)
+        case failed(String)
+    }
+    private static func probe(_ address: String, pin: String) async -> OriginProbe {
+        do {
+            let client = try APIClient(connection: Connection(url: address, pin: pin, deviceID: "", privateKey: Data()))
+            guard let base = URL(string: address) else { return .failed("Invalid server address") }
+            var request = URLRequest(url: base.appendingPathComponent("health"))
+            request.timeoutInterval = 8
+            let (_, response) = try await client.session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return .failed("\(address): unexpected health response")
+            }
+            return .reachable(address)
+        } catch {
+            return .failed("\(address): \(connectionFailure(error))")
+        }
+    }
+    static func connectionFailure(_ error: Error) -> String {
+        let failure = error as NSError
+        guard failure.domain == NSURLErrorDomain else { return "Connection failed (\(failure.domain), \(failure.code))" }
+        switch URLError.Code(rawValue: failure.code) {
+        case .timedOut: return "Timed out. The server did not respond in time."
+        case .cannotConnectToHost: return "Connection refused or host unavailable."
+        case .notConnectedToInternet: return "Network access unavailable. Check xlatch’s Local Network permission and VPN access."
+        case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .secureConnectionFailed, .userCancelledAuthentication:
+            return "TLS verification failed. The saved certificate pin or certificate trust may not match; do not disable verification."
+        default: return "\(failure.localizedDescription) (URL error \(failure.code))"
+        }
+    }
+    private static func reachableOrigin(_ addresses: [String], pin: String) async throws -> String {
+        try await withThrowingTaskGroup(of: OriginProbe.self) { group in
+            for address in Set(addresses) { group.addTask { await probe(address, pin: pin) } }
+            var failures: [String] = []
+            for try await result in group {
+                switch result {
+                case .reachable(let address): group.cancelAll(); return address
+                case .failed(let reason): failures.append(reason)
                 }
             }
-            for await address in group {
-                if let address { group.cancelAll(); return address }
-            }
-            return nil
+            throw ClientError.message("Could not connect to xlatch.\n" + failures.sorted().joined(separator: "\n"))
         }
     }
 
@@ -141,9 +160,7 @@ final class APIClient {
     }
     private func post<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
         if let addresses = connection.urls, addresses.count > 1 {
-            guard let origin = await Self.reachableOrigin(addresses, pin: connection.pin) else {
-                throw ClientError.message("Your server is unreachable at \(addresses.joined(separator: ", ")). Check your network or mesh VPN connection.")
-            }
+            let origin = try await Self.reachableOrigin(addresses, pin: connection.pin)
             let selected = Connection(url: origin, pin: connection.pin, deviceID: connection.deviceID, privateKey: connection.privateKey)
             let response: T = try await APIClient(connection: selected).post(path, body: body)
             lastSuccessfulURL = origin
