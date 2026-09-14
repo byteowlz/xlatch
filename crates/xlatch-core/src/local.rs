@@ -146,6 +146,7 @@ async fn handle(
         let control: Control = serde_json::from_slice(&buffer)?;
         let mut store = Store::open(dir)?;
         authorize_control(&control, protected)?;
+        let (urls, pin) = current_transport(dir, urls, pin)?;
         match control {
             Control::Identity => Ok(
                 json!({"purpose":"xlatch.identity","server_id":store.server_identity()?,"url":urls.first().context("no server address")?,"urls":urls,"pin":pin}),
@@ -256,4 +257,19 @@ pub fn authorize_control(control: &Control, protected: bool) -> Result<()> {
         "protected service denies local approval, grant, revocation and invocation shortcuts; use an authorized device"
     );
     Ok(())
+}
+
+// Read a single atomic server snapshot so pairing never advertises a stale certificate.
+fn current_transport(dir: &Path, urls: Vec<String>, pin: String) -> Result<(Vec<String>, String)> {
+    #[derive(serde::Deserialize)]
+    struct Transport {
+        urls: Vec<String>,
+        pin: String,
+    }
+    let path = dir.join("tls-identity.json");
+    if !path.exists() {
+        return Ok((urls, pin));
+    }
+    let transport: Transport = serde_json::from_slice(&std::fs::read(path)?)?;
+    Ok((transport.urls, transport.pin))
 }

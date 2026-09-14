@@ -1,19 +1,18 @@
 //! HTTPS capability service with a private local control socket.
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State},
     http::StatusCode,
     routing::{get, post},
 };
-use axum_server::tls_rustls::RustlsConfig;
 use clap::Args;
 use serde_json::{Value, json};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use xlatch_core::{
     auth::{Enrollment, SignedRequest},
-    capability::{MAX_BYTES, digest},
+    capability::MAX_BYTES,
     local, service,
     store::Store,
     worker,
@@ -50,28 +49,20 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
         cli.listen.set_port(port);
     }
     let protected = crate::protected::load(cli.protected_config.as_deref(), &data_dir)?;
-    let mut origins = crate::network::origins(cli.listen, cli.public_url.as_deref())?;
+    let origins = crate::network::origins(cli.listen, cli.public_url.as_deref())?;
     let (mut store, lock) = open_store(&data_dir)?;
     let notifications = crate::notifications::prepare(&data_dir)?;
     if protected.is_some() {
         crate::protected::require_guard(&data_dir)?;
     }
     store.recover()?;
-    let (tls, pin) = tls_config(
-        &data_dir,
-        &mut origins,
-        store.devices()?.iter().any(|device| !device.revoked),
-    )
-    .await?;
+    let (tls, pin) = crate::tls::prepare(&data_dir, &origins).await?;
     let state = AppState {
         dir: data_dir.clone(),
         permits: Arc::new(tokio::sync::Semaphore::new(16)),
     };
     let app = Router::new()
-        .route(
-            "/health",
-            get(|| async { Json(json!({"name":"xlatch","version":1})) }),
-        )
+        .route("/health", get(health))
         .route("/v1/pair", post(pair))
         .route("/v1/rpc", post(rpc))
         .layer(DefaultBodyLimit::max(MAX_BYTES))
@@ -82,6 +73,12 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     listener.set_nonblocking(true)?;
     let address = listener.local_addr()?;
     let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(crate::tls::maintain(
+        data_dir.clone(),
+        cli.listen,
+        cli.public_url.clone(),
+        tls.clone(),
+    ));
     #[cfg(unix)]
     if let Some(config) = &protected {
         tasks.spawn(local::serve_scoped(
@@ -133,65 +130,10 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     Ok(())
 }
 
-async fn tls_config(
-    dir: &std::path::Path,
-    origins: &mut Vec<String>,
-    has_devices: bool,
-) -> Result<(RustlsConfig, String)> {
-    let cert_path = dir.join("server.pem");
-    let key_path = dir.join("server-key.pem");
-    let der_path = dir.join("server.der");
-    ensure!(
-        cert_path.exists() == key_path.exists() && cert_path.exists() == der_path.exists(),
-        "incomplete TLS identity; restore the certificate/key/DER set"
-    );
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let mut regenerate = !der_path.exists();
-    if !regenerate {
-        let der = std::fs::read(&der_path)?;
-        let supported = origins
-            .iter()
-            .filter(|origin| crate::network::certificate_covers(&der, origin))
-            .cloned()
-            .collect::<Vec<_>>();
-        if supported.len() != origins.len() {
-            if has_devices {
-                ensure!(
-                    !supported.is_empty(),
-                    "the existing paired certificate covers none of the current addresses; restore the prior network address or revoke devices before re-pairing"
-                );
-                eprintln!(
-                    "Keeping the paired server identity; newly discovered addresses need certificate migration before use."
-                );
-                *origins = supported;
-            } else {
-                regenerate = true;
-            }
-        }
-    }
-    if regenerate {
-        let hosts = origins
-            .iter()
-            .map(|origin| {
-                Ok(url::Url::parse(origin)?
-                    .host_str()
-                    .context("missing host")?
-                    .trim_matches(['[', ']'])
-                    .to_owned())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(hosts)?;
-        std::fs::write(&key_path, signing_key.serialize_pem())?;
-        std::fs::write(&cert_path, cert.pem())?;
-        std::fs::write(&der_path, cert.der())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
-        }
-    }
-    let config = RustlsConfig::from_pem_file(cert_path, key_path).await?;
-    Ok((config, digest(&std::fs::read(der_path)?)))
+async fn health(State(state): State<AppState>) -> ApiResult {
+    crate::tls::health(&state.dir)
+        .map(Json)
+        .map_err(|_| api_error(StatusCode::SERVICE_UNAVAILABLE, "TLS identity unavailable"))
 }
 
 fn api_error(status: StatusCode, message: &str) -> (StatusCode, Json<Value>) {

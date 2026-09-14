@@ -123,6 +123,7 @@ struct Connection: Codable {
     var urls: [String]? = nil
     var serverID: String? = nil
     var approvalKeyID: String? = nil
+    var keyPin: String? = nil
 }
 
 enum ClientError: LocalizedError {

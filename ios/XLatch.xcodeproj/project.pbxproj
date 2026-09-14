@@ -16,10 +16,13 @@
 		969A844B809996F45F671075 /* CapabilityApprovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0723883B78480ECA4505859 /* CapabilityApprovalTests.swift */; };
 		9B3097EB92218A416B5A501D /* XLatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */; };
 		9E63F338EB46242BFC6584D2 /* ProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB2F33E3B5E54F233E06AD5 /* ProtocolTests.swift */; };
+		A5591AFBC33FA164736737DD /* ServerDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD9D06AFA0E6DB21F45D4D8E /* ServerDiscovery.swift */; };
+		A85D5438ABFDB303DD76AF6B /* TransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1790F5C4920008A92F4DF6D2 /* TransportTests.swift */; };
 		A9427803D6DF86018844E660 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8742A5AD18C6B86070591B6E /* Models.swift */; };
 		C302FEA68688AFCA0FE53D73 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */; };
 		C5A82AA26AD29686AF854D1B /* LiveServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */; };
 		E413EEE061FE35349B63A97B /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
+		ED55F5E5EA79F33C71F54E83 /* ServerDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD9D06AFA0E6DB21F45D4D8E /* ServerDiscovery.swift */; };
 		F1890EC4FD2117A312E8BB73 /* XLatchShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7618D419102F88C16B0941D6 /* XLatchShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F368C8D24D321162745E9F1E /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 998A46FC0928DECBD3CBDB9D /* QRScanner.swift */; };
 		F751373C1D48E2DE7B78CD70 /* EnrollmentApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */; };
@@ -58,6 +61,7 @@
 
 /* Begin PBXFileReference section */
 		0FAB3DB88428F9B784667BA3 /* EnrollmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentTests.swift; sourceTree = "<group>"; };
+		1790F5C4920008A92F4DF6D2 /* TransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportTests.swift; sourceTree = "<group>"; };
 		1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerIdentityUpdate.swift; sourceTree = "<group>"; };
 		21A9E19665E7FEDE88483F33 /* Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Client.swift; sourceTree = "<group>"; };
 		238291A4FB72E6D55381C5DD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -73,6 +77,7 @@
 		A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XLatchApp.swift; sourceTree = "<group>"; };
 		A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApproval.swift; sourceTree = "<group>"; };
 		BBAA014B97E7AF24B34A14A6 /* XLatchTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = XLatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD9D06AFA0E6DB21F45D4D8E /* ServerDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDiscovery.swift; sourceTree = "<group>"; };
 		BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentApproval.swift; sourceTree = "<group>"; };
 		C0723883B78480ECA4505859 /* CapabilityApprovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApprovalTests.swift; sourceTree = "<group>"; };
 		D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
@@ -87,6 +92,7 @@
 				0FAB3DB88428F9B784667BA3 /* EnrollmentTests.swift */,
 				8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */,
 				7CB2F33E3B5E54F233E06AD5 /* ProtocolTests.swift */,
+				1790F5C4920008A92F4DF6D2 /* TransportTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -111,6 +117,7 @@
 			children = (
 				21A9E19665E7FEDE88483F33 /* Client.swift */,
 				8742A5AD18C6B86070591B6E /* Models.swift */,
+				BD9D06AFA0E6DB21F45D4D8E /* ServerDiscovery.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -266,6 +273,7 @@
 			files = (
 				E413EEE061FE35349B63A97B /* Client.swift in Sources */,
 				38C503C7F48FBE6339E2E224 /* Models.swift in Sources */,
+				ED55F5E5EA79F33C71F54E83 /* ServerDiscovery.swift in Sources */,
 				C302FEA68688AFCA0FE53D73 /* ShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -278,6 +286,7 @@
 				91BF9029C23B69CFB1777451 /* EnrollmentTests.swift in Sources */,
 				C5A82AA26AD29686AF854D1B /* LiveServerTests.swift in Sources */,
 				9E63F338EB46242BFC6584D2 /* ProtocolTests.swift in Sources */,
+				A85D5438ABFDB303DD76AF6B /* TransportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -290,6 +299,7 @@
 				F751373C1D48E2DE7B78CD70 /* EnrollmentApproval.swift in Sources */,
 				A9427803D6DF86018844E660 /* Models.swift in Sources */,
 				F368C8D24D321162745E9F1E /* QRScanner.swift in Sources */,
+				A5591AFBC33FA164736737DD /* ServerDiscovery.swift in Sources */,
 				30E9A392C39E0F421A9C63DC /* ServerIdentityUpdate.swift in Sources */,
 				9B3097EB92218A416B5A501D /* XLatchApp.swift in Sources */,
 			);

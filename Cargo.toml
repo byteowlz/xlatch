@@ -18,6 +18,7 @@ keywords = ["cli", "automation", "capabilities"]
 categories = ["command-line-utilities"]
 
 [workspace.dependencies]
+time = "=0.3.46"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 # Shared across workspace
 anyhow = "1.0"

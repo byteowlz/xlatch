@@ -266,7 +266,7 @@ struct PendingEnrollmentView: View {
 extension AppModel {
     func refreshEnrollment(using client: APIClient) async throws -> Bool {
             let status: EnrollmentStatus = try await client.rpc(["op": "enrollment", "request": ["action": "status"]])
-            if var remembered = connection {
+            if var remembered = try CredentialStore.load() ?? connection {
                 if let serverID = remembered.serverID {
                     guard serverID == status.server_id else { throw ClientError.message("Server identity changed. Review this server before pairing again.") }
                 } else {

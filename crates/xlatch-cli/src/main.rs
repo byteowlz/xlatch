@@ -8,6 +8,7 @@ mod protected;
 mod protected_install;
 mod server;
 mod service_install;
+mod tls;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};

@@ -46,6 +46,7 @@ import OSLog
                 content.sound = .default
                 try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: job.id, content: content, trigger: nil))
             }
+            connection = try CredentialStore.load()
             jobs = recent; activeServerURL = client.lastSuccessfulURL; error = nil; lastUpdated = Date()
         } catch { self.error = error.localizedDescription }
     }
@@ -328,6 +329,7 @@ struct SettingsView: View {
             Form {
                 Section {
                     LabeledContent("Address selection", value: "Automatic")
+                    LabeledContent("Server verification", value: model.connection?.keyPin == nil ? "Paired certificate" : "Paired server key")
                     if let address = model.activeServerURL {
                         VStack(alignment: .leading, spacing: 4) {
                             Label(model.error == nil ? "Connected using" : "Last connected using", systemImage: model.error == nil ? "checkmark.circle.fill" : "clock")
