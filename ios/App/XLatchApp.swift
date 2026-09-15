@@ -383,6 +383,7 @@ struct SettingsView: View {
                 }
                 Section { Button("Forget this server", role: .destructive) { confirmDisconnect = true } } footer: { Text("This removes the key from your phone. Use xlatch revoke on the server to revoke the device there too.") }
                 Section {
+                    NavigationLink("Shortcuts & Back Tap") { ShortcutSettingsView() }
                     NavigationLink("Device approvals") { EnrollmentSettingsView() }
                     if model.enrollmentStatus?.is_approver == true {
                         NavigationLink("Action approvals") { CapabilityApprovalListView() }

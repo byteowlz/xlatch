@@ -1,0 +1,102 @@
+{
+  "WFWorkflowClientVersion": "2106.0.3",
+  "WFWorkflowMinimumClientVersion": 900,
+  "WFWorkflowMinimumClientVersionString": "900",
+  "WFWorkflowIcon": {
+    "WFWorkflowIconGlyphNumber": 59511,
+    "WFWorkflowIconStartColor": 4251333119
+  },
+  "WFWorkflowActions": [
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.takescreenshot",
+      "WFWorkflowActionParameters": {
+        "UUID": "207953E2-C752-4F73-9227-FF00F18A2231"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.detect.link",
+      "WFWorkflowActionParameters": {
+        "UUID": "F18C3BE5-6B90-423B-83CF-AB43547B8A9C",
+        "WFInput": {
+          "WFSerializationType": "WFTextTokenString",
+          "Value": {
+            "string": "\ufffc",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ExtensionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.detect.text",
+      "WFWorkflowActionParameters": {
+        "UUID": "D4F49D23-DAD5-46DA-8135-ABF136721B1C",
+        "WFInput": {
+          "WFSerializationType": "WFTextTokenString",
+          "Value": {
+            "string": "\ufffc",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ExtensionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "com.byteowlz.xlatch.SendScreenContextIntent",
+      "WFWorkflowActionParameters": {
+        "AppIntentDescriptor": {
+          "AppIntentIdentifier": "SendScreenContextIntent",
+          "BundleIdentifier": "com.byteowlz.xlatch",
+          "TeamIdentifier": "K8RV7BFSRS",
+          "Name": "xlatch"
+        },
+        "screenshot": {
+          "WFSerializationType": "WFTextTokenAttachment",
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "207953E2-C752-4F73-9227-FF00F18A2231",
+            "OutputName": "Screenshot"
+          }
+        },
+        "extractText": true,
+        "includeClipboard": false,
+        "sourceURLs": {
+          "WFSerializationType": "WFTextTokenAttachment",
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "F18C3BE5-6B90-423B-83CF-AB43547B8A9C",
+            "OutputName": "URLs"
+          }
+        },
+        "sharedText": {
+          "WFSerializationType": "WFTextTokenAttachment",
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "D4F49D23-DAD5-46DA-8135-ABF136721B1C",
+            "OutputName": "Text"
+          }
+        }
+      }
+    }
+  ],
+  "WFWorkflowInputContentItemClasses": [
+    "WFURLContentItem",
+    "WFStringContentItem",
+    "WFSafariWebPageContentItem"
+  ],
+  "WFWorkflowTypes": [
+    "ReceivesOnScreenContent"
+  ],
+  "WFWorkflowHasShortcutInputVariables": true,
+  "WFWorkflowImportQuestions": [],
+  "WFWorkflowOutputContentItemClasses": [
+    "WFStringContentItem"
+  ],
+  "WFWorkflowNoInputBehavior": {}
+}

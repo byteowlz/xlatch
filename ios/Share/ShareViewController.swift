@@ -16,6 +16,9 @@ final class ShareViewController: UIViewController {
 
 @MainActor final class ShareModel: ObservableObject {
     @Published var input: ShareInput?
+    @Published var pageInput: ShareInput?
+    @Published var includePageText = false
+    var content: ShareInput? { includePageText ? pageInput ?? input : input }
     @Published var capabilities: [Capability] = APIClient.cachedCapabilities()
     @Published var disabledActionIDs: Set<String> = []
     @Published var loading = true
@@ -29,22 +32,41 @@ final class ShareViewController: UIViewController {
     func load() async {
         defer { loading = false }
         do {
-            guard let items = context?.inputItems as? [NSExtensionItem], let provider = items.flatMap({ $0.attachments ?? [] }).first else { throw ClientError.message("No shareable content was provided.") }
-            input = try await Self.load(provider)
+            guard let items = context?.inputItems as? [NSExtensionItem] else { throw ClientError.message("No shareable content was provided.") }
+            let providers = items.flatMap { $0.attachments ?? [] }
+            guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) || $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }) ?? providers.first else { throw ClientError.message("No shareable content was provided.") }
+            if let page = await Self.page(in: items) {
+                pageInput = .text(try page.text())
+                input = page.sharedURLs.first.map { .text($0, mime: "text/uri-list") } ?? pageInput
+            } else {
+                pageInput = nil
+                input = try await Self.load(provider)
+            }
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
             disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
             capabilities = try await APIClient(connection: connection).capabilities()
         } catch { self.error = error.localizedDescription }
     }
     func send(_ capability: Capability) async {
-        guard sending == nil, let input else { return }
+        guard sending == nil, let input = content else { return }
         sending = capability.id; error = nil; defer { sending = nil }
         do {
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
-            let key = requestKeys[capability.id] ?? UUID().uuidString; requestKeys[capability.id] = key
+            let keyID = capability.id + (includePageText ? ":page" : ":original")
+            let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
             _ = try await APIClient(connection: connection).invoke(capability, input: input, key: key)
             sent = true
         } catch { self.error = error.localizedDescription }
+    }
+    private static func page(in items: [NSExtensionItem]) async -> CapturedContext? {
+        for provider in items.flatMap({ $0.attachments ?? [] }) where provider.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier) {
+            // Safari enrichment is optional; another attachment still provides the original share.
+            guard let values = try? await provider.loadItem(forTypeIdentifier: UTType.propertyList.identifier) as? [String: Any],
+                  let page = values[NSExtensionJavaScriptPreprocessingResultsKey] as? [String: Any] else { continue }
+            return CapturedContext(sharedURLs: (page["url"] as? String).flatMap(CapturedContext.webURL).map { [$0] } ?? [],
+                pageTitle: page["title"] as? String, pageText: page["text"] as? String)
+        }
+        return nil
     }
     private static func load(_ provider: NSItemProvider) async throws -> ShareInput {
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
@@ -85,10 +107,15 @@ struct ShareView: View {
                     }.padding(28)
                 } else {
                     List {
-                        if let input = model.input { Section("Sharing") { Text(input.label).lineLimit(3) } }
+                        if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
+                        if model.pageInput != nil {
+                            Section { Toggle("Include Safari page text", isOn: $model.includePageText).disabled(model.sending != nil) } footer: {
+                                Text("Include the page title and text along with its URL. Turn off to share only the link.")
+                            }
+                        }
                         if let error = model.error { Section { Text(error).foregroundStyle(.red); Button("Try connection again") { Task { await model.load() } } } }
                         if model.loading { ProgressView("Finding actions…") }
-                        if let input = model.input {
+                        if let input = model.content {
                             let matches = model.capabilities.filter { $0.accepts(input.mime) && !model.disabledActionIDs.contains($0.id) }
                             if matches.isEmpty && !model.loading { ContentUnavailableView("No compatible actions", systemImage: "bolt.slash", description: Text("Enable or grant this device an action that accepts \(input.mime).")) }
                             Section("Choose an action") {

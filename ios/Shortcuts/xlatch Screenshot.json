@@ -1,0 +1,50 @@
+{
+  "WFWorkflowClientVersion": "2106.0.3",
+  "WFWorkflowMinimumClientVersion": 900,
+  "WFWorkflowMinimumClientVersionString": "900",
+  "WFWorkflowIcon": {
+    "WFWorkflowIconGlyphNumber": 59511,
+    "WFWorkflowIconStartColor": 4251333119
+  },
+  "WFWorkflowActions": [
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.takescreenshot",
+      "WFWorkflowActionParameters": {
+        "UUID": "207953E2-C752-4F73-9227-FF00F18A2231"
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "com.byteowlz.xlatch.SendScreenContextIntent",
+      "WFWorkflowActionParameters": {
+        "AppIntentDescriptor": {
+          "AppIntentIdentifier": "SendScreenContextIntent",
+          "BundleIdentifier": "com.byteowlz.xlatch",
+          "TeamIdentifier": "K8RV7BFSRS",
+          "Name": "xlatch"
+        },
+        "screenshot": {
+          "WFSerializationType": "WFTextTokenAttachment",
+          "Value": {
+            "Type": "ActionOutput",
+            "OutputUUID": "207953E2-C752-4F73-9227-FF00F18A2231",
+            "OutputName": "Screenshot"
+          }
+        },
+        "extractText": false,
+        "includeClipboard": false
+      }
+    }
+  ],
+  "WFWorkflowInputContentItemClasses": [
+    "WFURLContentItem",
+    "WFStringContentItem",
+    "WFSafariWebPageContentItem"
+  ],
+  "WFWorkflowTypes": [],
+  "WFWorkflowHasShortcutInputVariables": false,
+  "WFWorkflowImportQuestions": [],
+  "WFWorkflowOutputContentItemClasses": [
+    "WFStringContentItem"
+  ],
+  "WFWorkflowNoInputBehavior": {}
+}

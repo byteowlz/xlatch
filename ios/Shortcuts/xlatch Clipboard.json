@@ -1,0 +1,34 @@
+{
+  "WFWorkflowClientVersion": "2106.0.3",
+  "WFWorkflowMinimumClientVersion": 900,
+  "WFWorkflowMinimumClientVersionString": "900",
+  "WFWorkflowIcon": {
+    "WFWorkflowIconGlyphNumber": 59511,
+    "WFWorkflowIconStartColor": 4251333119
+  },
+  "WFWorkflowActions": [
+    {
+      "WFWorkflowActionIdentifier": "com.byteowlz.xlatch.SendClipboardIntent",
+      "WFWorkflowActionParameters": {
+        "AppIntentDescriptor": {
+          "AppIntentIdentifier": "SendClipboardIntent",
+          "BundleIdentifier": "com.byteowlz.xlatch",
+          "TeamIdentifier": "K8RV7BFSRS",
+          "Name": "xlatch"
+        }
+      }
+    }
+  ],
+  "WFWorkflowInputContentItemClasses": [
+    "WFURLContentItem",
+    "WFStringContentItem",
+    "WFSafariWebPageContentItem"
+  ],
+  "WFWorkflowTypes": [],
+  "WFWorkflowHasShortcutInputVariables": false,
+  "WFWorkflowImportQuestions": [],
+  "WFWorkflowOutputContentItemClasses": [
+    "WFStringContentItem"
+  ],
+  "WFWorkflowNoInputBehavior": {}
+}
