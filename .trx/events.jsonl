@@ -68,3 +68,4 @@
 {"id":"evt_qn8msf1d","issue_id":"xltch-te16","action":"created","timestamp":"2026-09-14T08:27:18.786743Z"}
 {"id":"evt_k4damrv4","issue_id":"xltch-zmha","action":"created","timestamp":"2026-09-14T14:33:02.536401Z"}
 {"id":"evt_xwsdmzas","issue_id":"xltch-zmha","action":"updated","timestamp":"2026-09-14T14:35:45.112345Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}
+{"id":"evt_00r4mgw6","issue_id":"xltch-zmha","action":"closed","timestamp":"2026-09-15T07:34:47.838802Z","note":"Production ATS policy explicitly approved and applied to app and share extension. Live iOS simulator connection to the running tailnet server succeeds; wrong pin rejected and dead-origin fallback passes. Full Rust checks pass, 14 iOS tests pass (one separate live enrollment test skipped). Signed device build succeeds and both built targets have identical scoped policy. Physical phone unavailable to this host; install from nearby MacBook."}

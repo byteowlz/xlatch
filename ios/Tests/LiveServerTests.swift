@@ -26,3 +26,27 @@ final class LiveServerTests: XCTestCase {
         catch { /* Expected TLS rejection. */ }
     }
 }
+
+extension LiveServerTests {
+    func testLiveTransportRejectsWrongPinAndFallsBackToReachableOrigin() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let origin = environment["XLATCH_TEST_ORIGIN"], let pin = environment["XLATCH_TEST_PIN"] else {
+            throw XCTSkip("Requires a live server origin and public certificate pin")
+        }
+        let route = try await ServerDiscovery.reachableOrigin(["https://127.0.0.1:1", origin], pin: pin)
+        XCTAssertEqual(route.url, origin)
+        let url = try XCTUnwrap(URL(string: origin))
+        let session = URLSession(configuration: .ephemeral, delegate: PinnedSession(origin: url, pin: String(repeating: "0", count: 64)), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        do {
+            _ = try await session.data(from: url.appendingPathComponent("health"))
+            XCTFail("Wrong certificate pin accepted")
+        } catch {
+            // URLSession can report explicit authentication-challenge rejection as cancellation.
+            let failure = error as NSError
+            XCTAssertTrue(APIClient.connectionFailure(error).contains("TLS verification failed") ||
+                          (failure.domain == NSURLErrorDomain && failure.code == URLError.cancelled.rawValue),
+                          "Unexpected failure: \(error)")
+        }
+    }
+}

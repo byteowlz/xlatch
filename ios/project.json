@@ -43,7 +43,44 @@
           "NSCameraUsageDescription": "Scan a pairing code from your xlatch server.",
           "NSLocalNetworkUsageDescription": "Connect to your paired xlatch server to send actions and retrieve results.",
           "NSAppTransportSecurity": {
-            "NSAllowsLocalNetworking": true
+            "NSAllowsLocalNetworking": true,
+            "NSExceptionDomains": {
+              "10.0.0.0/8": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "172.16.0.0/12": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "192.168.0.0/16": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "100.64.0.0/10": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "127.0.0.0/8": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "fc00::/7": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "::1": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              }
+            }
           },
           "UIApplicationSceneManifest": {
             "UIApplicationSupportsMultipleScenes": false
@@ -97,7 +134,44 @@
           "XLatchKeychainGroup": "$(AppIdentifierPrefix)com.byteowlz.xlatch.shared",
           "NSLocalNetworkUsageDescription": "Send shared content to your paired xlatch server.",
           "NSAppTransportSecurity": {
-            "NSAllowsLocalNetworking": true
+            "NSAllowsLocalNetworking": true,
+            "NSExceptionDomains": {
+              "10.0.0.0/8": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "172.16.0.0/12": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "192.168.0.0/16": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "100.64.0.0/10": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "127.0.0.0/8": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "fc00::/7": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              },
+              "::1": {
+                "NSExceptionAllowsInsecureHTTPLoads": true,
+                "NSExceptionMinimumTLSVersion": "TLSv1.2",
+                "NSExceptionRequiresForwardSecrecy": true
+              }
+            }
           },
           "NSExtension": {
             "NSExtensionPointIdentifier": "com.apple.share-services",
