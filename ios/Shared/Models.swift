@@ -142,9 +142,15 @@ struct ShareInput {
         ShareInput(mime: mime, label: text, payload: ["text": text, "mime_type": mime])
     }
     static func file(at url: URL, mime: String) throws -> ShareInput {
-        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-        guard let size, size <= 4 * 1024 * 1024 else { throw ClientError.message("This file is larger than the 4 MB limit in this first version.") }
-        return try file(Data(contentsOf: url), name: url.lastPathComponent, mime: mime)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { handle.closeFile() }
+        let limit = 4 * 1024 * 1024
+        var data = Data()
+        while data.count <= limit {
+            guard let chunk = try handle.read(upToCount: min(64 * 1024, limit + 1 - data.count)), !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        return try file(data, name: url.lastPathComponent, mime: mime)
     }
     static func file(_ data: Data, name: String, mime: String) throws -> ShareInput {
         guard data.count <= 4 * 1024 * 1024 else { throw ClientError.message("This file is larger than the 4 MB limit in this first version.") }

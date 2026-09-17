@@ -9,6 +9,18 @@ enum ShareContentLoader {
     }
 
     static func load(_ provider: NSItemProvider) async throws -> ShareInput {
+        do { return try await loadContent(provider) }
+        catch {
+            throw ClientError.message(error.localizedDescription + "\n[DEBUG-c487] Types: " + provider.registeredTypeIdentifiers.joined(separator: ", "))
+        }
+    }
+
+    private static func diagnostic(_ stage: String, _ error: Error) -> Error {
+        let code = error as NSError
+        return ClientError.message("\(error.localizedDescription)\n[DEBUG-c487] \(stage): \(code.domain)/\(code.code)")
+    }
+
+    private static func loadContent(_ provider: NSItemProvider) async throws -> ShareInput {
         let contentType = provider.registeredTypeIdentifiers.first {
             guard let type = UTType($0) else { return false }
             return type.conforms(to: .data) && !type.conforms(to: .url)
@@ -24,7 +36,7 @@ enum ShareContentLoader {
             return try await withCheckedThrowingContinuation { continuation in
                 provider.loadItem(forTypeIdentifier: typeID, options: nil) { item, error in
                     do {
-                        if let error { throw error }
+                        if let error { throw diagnostic("loadItem", error) }
                         guard let url = item as? URL else {
                             throw ClientError.message("The source app did not provide a readable URL.")
                         }
@@ -47,7 +59,7 @@ enum ShareContentLoader {
         return try await withCheckedThrowingContinuation { continuation in
             provider.loadFileRepresentation(forTypeIdentifier: typeID) { url, error in
                 do {
-                    if let error { throw error }
+                    if let error { throw diagnostic("file representation", error) }
                     guard let url else { throw ClientError.message("The source app did not provide a file.") }
                     // Read while the provider's temporary file is still valid.
                     let input = try readFile(url, mime: UTType(typeID)?.preferredMIMEType)
@@ -64,13 +76,14 @@ enum ShareContentLoader {
         var result: Result<ShareInput, Error>?
         NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
             result = Result {
-                let contentType = try readableURL.resourceValues(forKeys: [.contentTypeKey]).contentType
-                let resolvedMIME = mime ?? contentType?.preferredMIMEType
+                // File providers can grant byte access while denying resource metadata.
+                let resolvedMIME = mime
                     ?? UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-                return try ShareInput.file(at: readableURL, mime: resolvedMIME)
+                do { return try ShareInput.file(at: readableURL, mime: resolvedMIME) }
+                catch { throw diagnostic("file read; scope=\(scoped)", error) }
             }
         }
-        if let coordinationError { throw coordinationError }
+        if let coordinationError { throw diagnostic("coordination; scope=\(scoped)", coordinationError) }
         guard let result else { throw ClientError.message("The source app did not provide a readable file.") }
         return try result.get()
     }

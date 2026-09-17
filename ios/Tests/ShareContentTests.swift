@@ -55,6 +55,17 @@ final class ShareContentTests: XCTestCase {
         XCTAssertNil(input.payload["text"])
     }
 
+    func testBoundedFileReadRejectsOversizeAndPreservesEmptyFiles() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(repeating: 42, count: 4 * 1024 * 1024 + 1).write(to: url)
+        XCTAssertThrowsError(try ShareInput.file(at: url, mime: "application/octet-stream"))
+        try Data().write(to: url)
+        let input = try ShareInput.file(at: url, mime: "application/octet-stream")
+        let file = try XCTUnwrap(input.payload["file"] as? [String: String])
+        XCTAssertEqual(file["data_base64"], "")
+    }
+
     func testWebURLRemainsALink() async throws {
         let url = try XCTUnwrap(URL(string: "https://example.test/post/123"))
         let provider = NSItemProvider(item: url as NSURL, typeIdentifier: UTType.url.identifier)
