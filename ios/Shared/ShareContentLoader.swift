@@ -9,17 +9,29 @@ enum ShareContentLoader {
     }
 
     static func load(_ provider: NSItemProvider) async throws -> ShareInput {
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            let item = try await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier)
-            guard let url = item as? URL, url.isFileURL else {
-                throw ClientError.message("The source app did not provide a readable file URL.")
-            }
-            return try readFile(url)
+        let contentType = provider.registeredTypeIdentifiers.first {
+            guard let type = UTType($0) else { return false }
+            return type.conforms(to: .data) && !type.conforms(to: .url)
+        }
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier), let contentType {
+            return try await loadFile(provider, typeID: contentType)
         }
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            let item = try await provider.loadItem(forTypeIdentifier: UTType.url.identifier)
-            if let url = item as? URL {
-                return try url.isFileURL ? readFile(url) : .text(url.absoluteString, mime: "text/uri-list")
+            // Consume file URLs inside the provider callback: its access grant may
+            // no longer be valid after an async loadItem returns to our task.
+            let typeID = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                ? UTType.fileURL.identifier : UTType.url.identifier
+            return try await withCheckedThrowingContinuation { continuation in
+                provider.loadItem(forTypeIdentifier: typeID, options: nil) { item, error in
+                    do {
+                        if let error { throw error }
+                        guard let url = item as? URL else {
+                            throw ClientError.message("The source app did not provide a readable URL.")
+                        }
+                        let input = try url.isFileURL ? readFile(url) : .text(url.absoluteString, mime: "text/uri-list")
+                        continuation.resume(returning: input)
+                    } catch { continuation.resume(throwing: error) }
+                }
             }
         }
         if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
@@ -28,6 +40,10 @@ enum ShareContentLoader {
             if let data = item as? Data, let text = String(data: data, encoding: .utf8) { return .text(text) }
         }
         guard let typeID = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .data) == true }) else { throw ClientError.message("This content type is not supported yet.") }
+        return try await loadFile(provider, typeID: typeID)
+    }
+
+    private static func loadFile(_ provider: NSItemProvider, typeID: String) async throws -> ShareInput {
         return try await withCheckedThrowingContinuation { continuation in
             provider.loadFileRepresentation(forTypeIdentifier: typeID) { url, error in
                 do {

@@ -32,6 +32,7 @@ final class ShareViewController: UIViewController {
     init(context: NSExtensionContext?) { self.context = context }
     func done() { context?.completeRequest(returningItems: nil) }
     func load() async {
+        loading = true; error = nil
         defer { loading = false }
         do {
             guard let items = context?.inputItems as? [NSExtensionItem] else { throw ClientError.message("No shareable content was provided.") }
@@ -94,7 +95,7 @@ struct ShareView: View {
                                 Text("Include the page title and text along with its URL. Turn off to share only the link.")
                             }
                         }
-                        if let error = model.error { Section { Text(error).foregroundStyle(.red); Text("You can still save to a previously loaded target below for later delivery.").font(.caption); Button("Try connection again") { Task { await model.load() } } } }
+                        if let error = model.error { Section { Text(error).foregroundStyle(.red); if model.content != nil && !model.capabilities.isEmpty { Text("You can still save to a previously loaded target below for later delivery.").font(.caption) }; Button("Try again") { Task { await model.load() } } } }
                         if model.loading { ProgressView("Finding actions…") }
                         if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
                         if let input = model.content {

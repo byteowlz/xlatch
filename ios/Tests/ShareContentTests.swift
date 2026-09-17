@@ -39,6 +39,22 @@ final class ShareContentTests: XCTestCase {
         XCTAssertTrue(ShareContentLoader.provider(in: [text, file]) === file)
     }
 
+    func testFileRepresentationWinsOverInaccessibleOriginalURL() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        let bytes = Data("provider supplied bytes".utf8)
+        try bytes.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let provider = NSItemProvider(item: URL(fileURLWithPath: "/inaccessible/original.txt") as NSURL, typeIdentifier: UTType.fileURL.identifier)
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.plainText.identifier, fileOptions: [], visibility: .all) { completion in
+            completion(url, false, nil)
+            return nil
+        }
+        let input = try await ShareContentLoader.load(provider)
+        let file = try XCTUnwrap(input.payload["file"] as? [String: String])
+        XCTAssertEqual(file["data_base64"], bytes.base64EncodedString())
+        XCTAssertNil(input.payload["text"])
+    }
+
     func testWebURLRemainsALink() async throws {
         let url = try XCTUnwrap(URL(string: "https://example.test/post/123"))
         let provider = NSItemProvider(item: url as NSURL, typeIdentifier: UTType.url.identifier)
