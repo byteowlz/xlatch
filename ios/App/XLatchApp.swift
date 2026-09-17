@@ -228,6 +228,7 @@ struct ComposeView: View {
                 Button { submit() } label: { HStack { if submitting { ProgressView() }; Text(submitting ? "Sending…" : "Run action").frame(maxWidth: .infinity) } }
                     .disabled(submitting || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && file == nil))
             }
+            if submitting { Section { LiveUploadProgress(id: requestKey) } }
             if let submitted {
                 Section {
                     if let jobID = submitted.jobID { NavigationLink("View submitted job") { JobView(id: jobID) } }

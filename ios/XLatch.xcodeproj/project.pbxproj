@@ -21,7 +21,9 @@
 		4256F1E48E1ABD94980E3741 /* xlatch Screenshot.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */; };
 		448FCE6DA5D3841C1FD57E23 /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
 		5134A4D24BBBBDDD292AFF43 /* ScreenshotCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52C6A57003E9930DC90F2CF2 /* ScreenshotCapture.swift */; };
+		585B43632F0843E183457180 /* UploadProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82186D9ED51FA21A435FE8F /* UploadProgress.swift */; };
 		656F59C7179FDF632D13ACED /* OutboxItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E493BDC12A16E688518DBE43 /* OutboxItem.swift */; };
+		6B3145BC70BFEF53A1D7F373 /* UploadProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82186D9ED51FA21A435FE8F /* UploadProgress.swift */; };
 		704E8174170D8FCD56997FF4 /* OutboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3756907BF14BC079A654F30D /* OutboxView.swift */; };
 		74D1A1B4CF5E220375BAB9E5 /* OutboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4972E9EBB91BE6C98F09288 /* OutboxTests.swift */; };
 		79676D1C25C0A1431D0A05C7 /* ShortcutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BB91D9A919FC553A84462BB /* ShortcutTests.swift */; };
@@ -111,6 +113,7 @@
 		A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XLatchApp.swift; sourceTree = "<group>"; };
 		A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApproval.swift; sourceTree = "<group>"; };
 		B4972E9EBB91BE6C98F09288 /* OutboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxTests.swift; sourceTree = "<group>"; };
+		B82186D9ED51FA21A435FE8F /* UploadProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadProgress.swift; sourceTree = "<group>"; };
 		BBAA014B97E7AF24B34A14A6 /* XLatchTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = XLatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BD9D06AFA0E6DB21F45D4D8E /* ServerDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDiscovery.swift; sourceTree = "<group>"; };
 		BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentApproval.swift; sourceTree = "<group>"; };
@@ -171,6 +174,7 @@
 				E493BDC12A16E688518DBE43 /* OutboxItem.swift */,
 				2C9609C7A843DD62FD424857 /* OutboxStore.swift */,
 				BD9D06AFA0E6DB21F45D4D8E /* ServerDiscovery.swift */,
+				B82186D9ED51FA21A435FE8F /* UploadProgress.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -356,6 +360,7 @@
 				24C38B017E05BD887F4FEC9B /* OutboxStore.swift in Sources */,
 				ED55F5E5EA79F33C71F54E83 /* ServerDiscovery.swift in Sources */,
 				C302FEA68688AFCA0FE53D73 /* ShareViewController.swift in Sources */,
+				585B43632F0843E183457180 /* UploadProgress.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -394,6 +399,7 @@
 				30E9A392C39E0F421A9C63DC /* ServerIdentityUpdate.swift in Sources */,
 				D863A4DDCD8DE65D7F3AB1C0 /* ShortcutSettingsView.swift in Sources */,
 				2C29AB9C1430A2F509B25747 /* ShortcutTargets.swift in Sources */,
+				6B3145BC70BFEF53A1D7F373 /* UploadProgress.swift in Sources */,
 				9B3097EB92218A416B5A501D /* XLatchApp.swift in Sources */,
 				C91E06AFE0270D17318928B7 /* XLatchIntents.swift in Sources */,
 			);

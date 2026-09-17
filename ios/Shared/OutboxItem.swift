@@ -17,6 +17,7 @@ struct OutboxItem: Codable, Identifiable {
     let expires: Date
     var state: State = .waiting
     var attempts = 0
+    var upload: UploadProgress?
     var nextAttempt: Date
     var lease: String?
     var leaseUntil: Date?
@@ -45,7 +46,7 @@ struct OutboxItem: Codable, Identifiable {
     var statusLabel: String {
         switch state {
         case .waiting: return "Waiting for server"
-        case .sending: return "Sending"
+        case .sending: return upload?.label ?? "Connecting to server"
         case .paused: return "Needs attention"
         case .sent: return "Accepted by server"
         case .cancelled: return "Retries stopped"

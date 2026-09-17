@@ -126,3 +126,32 @@ private actor DeduplicatingServer {
         return Job(id: "one-job", capability_id: item.capability.id, status: "queued", result: nil, error: nil, created_at: 0)
     }
 }
+
+extension OutboxTests {
+    func testUploadProgressIsNotAcceptanceAndOldLeaseCannotOverwriteRetry() throws {
+        let (_, store, _, item) = try fixture()
+        _ = try store.enqueue(item)
+        let first = try XCTUnwrap(store.claim())
+        try store.updateProgress(first, progress: UploadProgress(sent: 100, total: 100))
+        let uploaded = try XCTUnwrap(store.items().first)
+        XCTAssertEqual(uploaded.state, .sending)
+        XCTAssertNil(uploaded.jobID)
+        XCTAssertEqual(uploaded.statusLabel, "Waiting for server acceptance")
+        let retry = try XCTUnwrap(store.claim(now: Date().addingTimeInterval(181)))
+        XCTAssertNil(retry.upload)
+        try store.updateProgress(first, progress: UploadProgress(sent: 100, total: 100))
+        XCTAssertNil(try store.items().first?.upload)
+        try store.updateProgress(retry, progress: UploadProgress(sent: 25, total: 100))
+        try store.updateProgress(retry, progress: UploadProgress(sent: 10, total: 100))
+        XCTAssertEqual(try store.items().first?.upload?.fraction, 0.25)
+        try store.cancel(item.id)
+        try store.updateProgress(retry, progress: UploadProgress(sent: 100, total: 100))
+        XCTAssertEqual(try store.items().first?.state, .cancelled)
+    }
+    func testUnknownAndOutOfRangeUploadCounts() {
+        XCTAssertNil(UploadProgress(sent: 10, total: -1).fraction)
+        XCTAssertEqual(UploadProgress(sent: -1, total: 100).fraction, 0)
+        XCTAssertEqual(UploadProgress(sent: 120, total: 100).fraction, 1)
+        XCTAssertEqual(UploadProgress(sent: 42, total: 100).label, "Uploading — 42%")
+    }
+}

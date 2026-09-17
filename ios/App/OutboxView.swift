@@ -33,6 +33,9 @@ struct OutboxView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.capability.manifest.title)
                             Text(item.statusLabel).font(.caption).foregroundStyle(item.state == .paused ? .orange : .secondary)
+                            if item.state == .sending, let upload = item.upload {
+                                UploadProgressBar(progress: upload)
+                            }
                             Text(item.created, style: .relative).font(.caption2).foregroundStyle(.secondary)
                         }
                     }
@@ -46,7 +49,7 @@ struct OutboxView: View {
                 .task {
                     while !Task.isCancelled {
                         await reload()
-                        do { try await Task.sleep(for: .seconds(2)) } catch { break }
+                        do { try await Task.sleep(for: .milliseconds(500)) } catch { break }
                     }
                 }
                 .confirmationDialog("Delete this saved share? It will not be retried. Work already accepted by the server is unaffected.", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {

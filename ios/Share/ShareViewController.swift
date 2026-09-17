@@ -25,6 +25,7 @@ final class ShareViewController: UIViewController {
     @Published var sending: String?
     @Published var sent = false
     @Published var receipt: OutboxItem?
+    @Published var uploadingID: String?
     @Published var error: String?
     private let context: NSExtensionContext?
     private var requestKeys: [String: String] = [:]
@@ -50,11 +51,12 @@ final class ShareViewController: UIViewController {
     }
     func send(_ capability: Capability) async {
         guard sending == nil, let input = content else { return }
-        sending = capability.id; error = nil; defer { sending = nil }
+        sending = capability.id; error = nil; defer { sending = nil; uploadingID = nil }
         do {
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
             let keyID = capability.id + (includePageText ? ":page" : ":original")
             let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
+            uploadingID = key
             receipt = try await OutboxDelivery.shared.submit(input, capability: capability, connection: connection, id: key)
             sent = true
         } catch { self.error = error.localizedDescription }
@@ -116,6 +118,7 @@ struct ShareView: View {
                         }
                         if let error = model.error { Section { Text(error).foregroundStyle(.red); Text("You can still save to a previously loaded target below for later delivery.").font(.caption); Button("Try connection again") { Task { await model.load() } } } }
                         if model.loading { ProgressView("Finding actions…") }
+                        if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
                         if let input = model.content {
                             let matches = model.capabilities.filter { $0.accepts(input.mime) && !model.disabledActionIDs.contains($0.id) }
                             if matches.isEmpty && !model.loading { ContentUnavailableView("No compatible actions", systemImage: "bolt.slash", description: Text("Enable or grant this device an action that accepts \(input.mime).")) }

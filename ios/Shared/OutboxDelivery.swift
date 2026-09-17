@@ -54,6 +54,7 @@ actor OutboxDelivery {
             throw ClientError.message("The target was removed, changed, or is no longer granted. Review this share; it will not switch targets automatically.")
         }
         try Task.checkCancellation()
-        return try await client.invoke(item.capability, input: item.input(), key: item.id)
+        let progress = UploadReporter(item: item, store: try OutboxStore())
+        return try await client.invoke(item.capability, input: item.input(), key: item.id, progress: progress.update)
     }
 }

@@ -60,6 +60,7 @@ final class OutboxStore {
         defer { sqlite3_finalize(statement) }
         let status = item.id.withCString { id in
             data.withUnsafeBytes { bytes in
+                defer { sqlite3_clear_bindings(statement) }
                 sqlite3_bind_text(statement, 1, id, -1, nil)
                 sqlite3_bind_blob(statement, 2, bytes.baseAddress, Int32(bytes.count), nil)
                 return sqlite3_step(statement)
@@ -72,6 +73,7 @@ final class OutboxStore {
         guard sqlite3_prepare_v2(db, "DELETE FROM items WHERE id=?1", -1, &statement, nil) == SQLITE_OK else { throw ClientError.message("Could not prepare Outbox deletion.") }
         defer { sqlite3_finalize(statement) }
         let status = id.withCString { value in
+            defer { sqlite3_clear_bindings(statement) }
             sqlite3_bind_text(statement, 1, value, -1, nil)
             return sqlite3_step(statement)
         }
@@ -116,9 +118,29 @@ final class OutboxStore {
             guard var item = try records(db).first(where: {
                 (id == nil || $0.id == id) && (($0.state == .waiting && $0.nextAttempt <= now) || ($0.state == .sending && ($0.leaseUntil ?? .distantPast) <= now))
             }) else { return nil }
+            item.upload = nil
             item.state = .sending; item.lease = UUID().uuidString
             item.leaseUntil = now.addingTimeInterval(180); item.attempts += 1
             try save(item, db); return item
+        }
+    }
+    func updateProgress(_ item: OutboxItem, progress: UploadProgress) throws {
+        try transaction { db in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT record FROM items WHERE id=?1", -1, &statement, nil) == SQLITE_OK else { throw ClientError.message("Could not read upload progress.") }
+            defer { sqlite3_finalize(statement) }
+            let data: Data? = item.id.withCString { id in
+                defer { sqlite3_reset(statement); sqlite3_clear_bindings(statement) }
+                sqlite3_bind_text(statement, 1, id, -1, nil)
+                guard sqlite3_step(statement) == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else { return nil }
+                return Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
+            }
+            guard let data else { return }
+            var current = try JSONDecoder().decode(OutboxItem.self, from: data)
+            guard current.state == .sending, current.lease == item.lease else { return }
+            guard progress.sent >= (current.upload?.sent ?? 0) else { return }
+            current.upload = progress
+            try save(current, db)
         }
     }
     func owns(_ item: OutboxItem) throws -> Bool {
@@ -127,6 +149,7 @@ final class OutboxStore {
     func finish(_ item: OutboxItem, job: Job? = nil, error: String? = nil, retry: Bool = false, now: Date = Date()) throws {
         try transaction { db in
             guard var saved = try records(db).first(where: { $0.id == item.id && $0.lease == item.lease && $0.state == .sending }) else { return }
+            saved.upload = nil
             saved.lease = nil; saved.leaseUntil = nil; saved.detail = error
             if let job { saved.state = .sent; saved.jobID = job.id; saved.payload = nil }
             else {
