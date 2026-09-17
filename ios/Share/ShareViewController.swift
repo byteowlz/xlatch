@@ -36,13 +36,13 @@ final class ShareViewController: UIViewController {
         do {
             guard let items = context?.inputItems as? [NSExtensionItem] else { throw ClientError.message("No shareable content was provided.") }
             let providers = items.flatMap { $0.attachments ?? [] }
-            guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) || $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }) ?? providers.first else { throw ClientError.message("No shareable content was provided.") }
+            guard let provider = ShareContentLoader.provider(in: providers) else { throw ClientError.message("No shareable content was provided.") }
             if let page = await Self.page(in: items) {
                 pageInput = .text(try page.text())
                 input = page.sharedURLs.first.map { .text($0, mime: "text/uri-list") } ?? pageInput
             } else {
                 pageInput = nil
-                input = try await Self.load(provider)
+                input = try await ShareContentLoader.load(provider)
             }
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
             disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
@@ -71,29 +71,7 @@ final class ShareViewController: UIViewController {
         }
         return nil
     }
-    private static func load(_ provider: NSItemProvider) async throws -> ShareInput {
-        if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            let item = try await provider.loadItem(forTypeIdentifier: UTType.url.identifier)
-            if let url = item as? URL { return .text(url.absoluteString, mime: "text/uri-list") }
-        }
-        if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-            let item = try await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier)
-            if let text = item as? String { return .text(text) }
-            if let data = item as? Data, let text = String(data: data, encoding: .utf8) { return .text(text) }
-        }
-        guard let typeID = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .data) == true }) else { throw ClientError.message("This content type is not supported yet.") }
-        return try await withCheckedThrowingContinuation { continuation in
-            provider.loadFileRepresentation(forTypeIdentifier: typeID) { url, error in
-                do {
-                    if let error { throw error }
-                    guard let url else { throw ClientError.message("The source app did not provide a file.") }
-                    // Read while the provider's temporary file is still valid.
-                    let input = try ShareInput.file(at: url, mime: UTType(typeID)?.preferredMIMEType ?? "application/octet-stream")
-                    continuation.resume(returning: input)
-                } catch { continuation.resume(throwing: error) }
-            }
-        }
-    }
+
 }
 
 struct ShareView: View {
