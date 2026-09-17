@@ -128,7 +128,10 @@ struct Connection: Codable {
 
 enum ClientError: LocalizedError {
     case message(String)
-    var errorDescription: String? { if case .message(let s) = self { return s }; return nil }
+    case delivery(String, retryable: Bool)
+    var errorDescription: String? {
+        switch self { case .message(let text), .delivery(let text, _): return text }
+    }
 }
 
 struct ShareInput {
@@ -156,5 +159,16 @@ enum ShareActionPreferences {
     }
     static func save(_ disabled: Set<String>, deviceID: String) {
         UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(disabled.sorted(), forKey: "disabled-actions.\(deviceID)")
+    }
+}
+
+extension ClientError {
+    static func isRetryable(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if case let ClientError.delivery(_, retryable) = error { return retryable }
+        let value = error as NSError
+        guard value.domain == NSURLErrorDomain else { return false }
+        return [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .dnsLookupFailed,
+                .notConnectedToInternet, .internationalRoamingOff, .dataNotAllowed, .cancelled].contains(URLError.Code(rawValue: value.code))
     }
 }

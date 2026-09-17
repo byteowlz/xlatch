@@ -14,17 +14,17 @@ enum ServerDiscovery {
     }
     private enum OriginProbe {
         case reachable(ServerRoute)
-        case failed(String)
+        case failed(String, retryable: Bool)
     }
     private static func probe(_ address: String, pin: String, keyPin: String?) async -> OriginProbe {
         do {
             let client = try APIClient(connection: Connection(url: address, pin: pin, deviceID: "", privateKey: Data(), keyPin: keyPin))
-            guard let base = URL(string: address) else { return .failed("Invalid server address") }
+            guard let base = URL(string: address) else { return .failed("Invalid server address", retryable: false) }
             var request = URLRequest(url: base.appendingPathComponent("health"))
             request.timeoutInterval = 8
-            let (data, response) = try await client.session.data(for: request)
+            let (data, response) = try await APIClient.verifiedData(for: request, session: client.session)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                return .failed("\(address): unexpected health response")
+                return .failed("\(address): unexpected health response", retryable: (response as? HTTPURLResponse).map { $0.statusCode == 429 || $0.statusCode >= 500 } ?? true)
             }
             let health = try JSONDecoder().decode(Health.self, from: data)
             guard health.name == "xlatch", health.version == 1 else { throw ClientError.message("Unexpected server") }
@@ -36,10 +36,11 @@ enum ServerDiscovery {
             }
             return .reachable(ServerRoute(url: address, addresses: addresses, keyPin: keyPin ?? health.key_pin))
         } catch {
-            return .failed("\(address): \(connectionFailure(error))")
+            return .failed("\(address): \(connectionFailure(error))", retryable: ClientError.isRetryable(error))
         }
     }
     static func connectionFailure(_ error: Error) -> String {
+        if case let ClientError.delivery(message, _) = error { return message }
         let failure = error as NSError
         guard failure.domain == NSURLErrorDomain else { return "Connection failed (\(failure.domain), \(failure.code))" }
         switch URLError.Code(rawValue: failure.code) {
@@ -55,13 +56,14 @@ enum ServerDiscovery {
         try await withThrowingTaskGroup(of: OriginProbe.self) { group in
             for address in Set(addresses) { group.addTask { await probe(address, pin: pin, keyPin: keyPin) } }
             var failures: [String] = []
+            var retryable = true
             for try await result in group {
                 switch result {
                 case .reachable(let address): group.cancelAll(); return address
-                case .failed(let reason): failures.append(reason)
+                case .failed(let reason, let canRetry): failures.append(reason); retryable = retryable && canRetry
                 }
             }
-            throw ClientError.message("Could not connect to xlatch.\n" + failures.sorted().joined(separator: "\n"))
+            throw ClientError.delivery("Could not connect to xlatch.\n" + failures.sorted().joined(separator: "\n"), retryable: retryable)
         }
     }
 

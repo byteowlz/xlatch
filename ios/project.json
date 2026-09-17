@@ -91,7 +91,13 @@
             "UIInterfaceOrientationLandscapeRight"
           ],
           "NSFaceIDUsageDescription": "Use Face ID to approve devices, actions and access grants.",
-          "XLatchApprovalKeychainGroup": "$(AppIdentifierPrefix)com.byteowlz.xlatch.approval"
+          "XLatchApprovalKeychainGroup": "$(AppIdentifierPrefix)com.byteowlz.xlatch.approval",
+          "BGTaskSchedulerPermittedIdentifiers": [
+            "com.byteowlz.xlatch.outbox"
+          ],
+          "UIBackgroundModes": [
+            "processing"
+          ]
         }
       },
       "entitlements": {
@@ -187,7 +193,10 @@
               },
               "NSExtensionJavaScriptPreprocessingFile": "SafariContext"
             }
-          }
+          },
+          "BGTaskSchedulerPermittedIdentifiers": [
+            "com.byteowlz.xlatch.outbox"
+          ]
         }
       },
       "entitlements": {

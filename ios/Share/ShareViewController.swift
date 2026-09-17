@@ -24,6 +24,7 @@ final class ShareViewController: UIViewController {
     @Published var loading = true
     @Published var sending: String?
     @Published var sent = false
+    @Published var receipt: OutboxItem?
     @Published var error: String?
     private let context: NSExtensionContext?
     private var requestKeys: [String: String] = [:]
@@ -54,7 +55,7 @@ final class ShareViewController: UIViewController {
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
             let keyID = capability.id + (includePageText ? ":page" : ":original")
             let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
-            _ = try await APIClient(connection: connection).invoke(capability, input: input, key: key)
+            receipt = try await OutboxDelivery.shared.submit(input, capability: capability, connection: connection, id: key)
             sent = true
         } catch { self.error = error.localizedDescription }
     }
@@ -101,8 +102,8 @@ struct ShareView: View {
                 if model.sent {
                     VStack(spacing: 20) {
                         Image(systemName: "checkmark.circle").font(.system(size: 48)).foregroundStyle(.tint)
-                        Text("Sent to your server").font(.title2.bold())
-                        Text("You can close this sheet. Find the result in xlatch’s Activity tab.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Text(model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone").font(.title2.bold())
+                        Text(model.receipt?.confirmation ?? "Open xlatch’s Outbox to check delivery.").foregroundStyle(.secondary).multilineTextAlignment(.center)
                         Button("Done") { model.done() }.buttonStyle(.borderedProminent)
                     }.padding(28)
                 } else {
@@ -113,7 +114,7 @@ struct ShareView: View {
                                 Text("Include the page title and text along with its URL. Turn off to share only the link.")
                             }
                         }
-                        if let error = model.error { Section { Text(error).foregroundStyle(.red); Button("Try connection again") { Task { await model.load() } } } }
+                        if let error = model.error { Section { Text(error).foregroundStyle(.red); Text("You can still save to a previously loaded target below for later delivery.").font(.caption); Button("Try connection again") { Task { await model.load() } } } }
                         if model.loading { ProgressView("Finding actions…") }
                         if let input = model.content {
                             let matches = model.capabilities.filter { $0.accepts(input.mime) && !model.disabledActionIDs.contains($0.id) }

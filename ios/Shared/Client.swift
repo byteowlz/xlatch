@@ -3,6 +3,16 @@ import CryptoKit
 import Security
 
 final class PinnedSession: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
+    private let trustLock = NSLock()
+    private var trustRejected = false
+    var rejectedTrust: Bool {
+        trustLock.lock(); defer { trustLock.unlock() }
+        return trustRejected
+    }
+    private func rejectTrust() {
+        trustLock.lock(); defer { trustLock.unlock() }
+        trustRejected = true
+    }
     private let origin: URL
     private let pin: String
     private let keyPin: String?
@@ -15,10 +25,10 @@ final class PinnedSession: NSObject, URLSessionDelegate, URLSessionTaskDelegate,
               let trust = challenge.protectionSpace.serverTrust,
               let certificates = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
               let certificate = certificates.first else {
-            completionHandler(.cancelAuthenticationChallenge, nil); return
+            rejectTrust(); completionHandler(.cancelAuthenticationChallenge, nil); return
         }
         guard Self.accepts(trust, certificate: certificate, host: challenge.protectionSpace.host, pin: pin, keyPin: keyPin) else {
-            completionHandler(.cancelAuthenticationChallenge, nil); return
+            rejectTrust(); completionHandler(.cancelAuthenticationChallenge, nil); return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
@@ -56,7 +66,7 @@ enum CredentialStore {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw ClientError.message("Unlock your phone to access its pairing key. (\(status))") }
+        guard status == errSecSuccess, let data = result as? Data else { throw ClientError.delivery("Unlock your phone to access its pairing key. (\(status))", retryable: status == errSecInteractionNotAllowed) }
         return try JSONDecoder().decode(Connection.self, from: data)
     }
     static func save(_ connection: Connection) throws {
@@ -112,6 +122,15 @@ final class APIClient {
         UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.removeObject(forKey: "capabilities")
         return saved
     }
+    static func verifiedData(for request: URLRequest, session: URLSession) async throws -> (Data, URLResponse) {
+        do { return try await session.data(for: request) }
+        catch {
+            if (session.delegate as? PinnedSession)?.rejectedTrust == true {
+                throw ClientError.delivery("TLS verification failed. Review the paired server identity before retrying.", retryable: false)
+            }
+            throw error
+        }
+    }
     static func connectionFailure(_ error: Error) -> String { ServerDiscovery.connectionFailure(error) }
 
     func rpc<T: Decodable>(_ payload: [String: Any]) async throws -> T {
@@ -129,15 +148,23 @@ final class APIClient {
     func invoke(_ capability: Capability, input: ShareInput, key: String) async throws -> Job {
         try await rpc(["op": "invoke", "capability_id": capability.id, "revision": capability.revision, "input": input.payload, "idempotency_key": key])
     }
+    private struct CapabilityCache: Codable {
+        let deviceID: String
+        let pin: String
+        let capabilities: [Capability]
+    }
     func capabilities() async throws -> [Capability] {
         let capabilities: [Capability] = try await rpc(["op": "discover"])
-        let data = try JSONEncoder().encode(capabilities)
-        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(data, forKey: "capabilities")
+        let cache = CapabilityCache(deviceID: connection.deviceID, pin: connection.pin, capabilities: capabilities)
+        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(try JSONEncoder().encode(cache), forKey: "capabilities")
         return capabilities
     }
     static func cachedCapabilities() -> [Capability] {
-        guard let data = UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.data(forKey: "capabilities"), let values = try? JSONDecoder().decode([Capability].self, from: data) else { return [] }
-        return values
+        guard let connection = try? CredentialStore.load(),
+              let data = UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.data(forKey: "capabilities"),
+              let cache = try? JSONDecoder().decode(CapabilityCache.self, from: data),
+              cache.deviceID == connection.deviceID, cache.pin == connection.pin else { return [] }
+        return cache.capabilities
     }
     private func post<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
         let route = try await ServerDiscovery.reachableOrigin([connection.url] + (connection.urls ?? []), pin: connection.pin, keyPin: connection.keyPin)
@@ -151,7 +178,7 @@ final class APIClient {
             try CredentialStore.save(remembered)
         }
         // Persist trusted metadata before submitting work: a Keychain error must not hide an accepted job.
-        // Only health requests are retried. Never replay a possibly accepted POST.
+        // Route discovery retries health probes only. Outbox retries an invocation with its durable idempotency key.
         let response: T = try await send(path, body: body, origin: route.url)
         lastSuccessfulURL = route.url
         return response
@@ -168,10 +195,10 @@ final class APIClient {
         let transport = URLSession(configuration: config, delegate: PinnedSession(origin: base, pin: connection.pin, keyPin: connection.keyPin), delegateQueue: nil)
         defer { transport.invalidateAndCancel() }
         request.timeoutInterval = 30
-        let (data, response) = try await transport.data(for: request)
+        let (data, response) = try await Self.verifiedData(for: request, session: transport)
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
             let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-            throw ClientError.message(message ?? "The server could not accept this request. Try again when it is reachable.")
+            throw ClientError.delivery(message ?? "The server could not accept this request.", retryable: (response as? HTTPURLResponse).map { $0.statusCode == 429 || $0.statusCode >= 500 } ?? true)
         }
         let decoded = try JSONDecoder().decode(T.self, from: data)
         lastSuccessfulURL = connection.url

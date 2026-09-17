@@ -45,7 +45,10 @@ struct XLatchTargetQuery: EntityStringQuery {
     }
     static func targets() async throws -> [XLatchTarget] {
         let connection = try connection()
-        let actions = try await APIClient(connection: connection).capabilities()
+        let cached = APIClient.cachedCapabilities()
+        let actions: [Capability]
+        if cached.isEmpty { actions = try await APIClient(connection: connection).capabilities() }
+        else { actions = cached }
         return available(actions, connection: connection).map { XLatchTarget(connection: connection, capability: $0) }
     }
     static func resolve(_ id: String, connection: Connection, capabilities: [Capability], mime: String) throws -> Capability {
@@ -55,13 +58,15 @@ struct XLatchTargetQuery: EntityStringQuery {
         guard capability.accepts(mime) else { throw ClientError.message("This target does not accept \(mime). Choose a compatible target.") }
         return capability
     }
-    static func send(_ input: ShareInput, target: XLatchTarget?) async throws -> String {
+    static func send(_ input: ShareInput, target: XLatchTarget?) async throws -> OutboxItem {
         guard let id = target?.id ?? selectedID else { throw ClientError.message("Choose a quick-send target in xlatch → Server → Shortcuts & Back Tap.") }
         let connection = try connection()
         let client = try APIClient(connection: connection)
-        let actions = try await client.capabilities()
+        let cached = APIClient.cachedCapabilities()
+        let actions: [Capability]
+        if cached.isEmpty { actions = try await client.capabilities() }
+        else { actions = cached }
         let action = try resolve(id, connection: connection, capabilities: actions, mime: input.mime)
-        let job = try await client.invoke(action, input: input, key: UUID().uuidString)
-        return job.id
+        return try await OutboxDelivery.shared.submit(input, capability: action, connection: connection)
     }
 }

@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 struct SendContentIntent: AppIntent {
     static var title: LocalizedStringResource = "Send to xlatch"
-    static var description = IntentDescription("Send text, a link or a file to an approved target. Leave Target empty to use your saved quick-send target. Returns the accepted job ID.")
+    static var description = IntentDescription("Send text, a link or a file to an approved target. Leave Target empty to use your saved quick-send target. Returns a server job ID, or an outbox: ID when saved for later delivery.")
     static var authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
     @Parameter(title: "Text or URL") var text: String?
     @Parameter(title: "File") var file: IntentFile?
@@ -21,8 +21,8 @@ struct SendContentIntent: AppIntent {
         } else if let text, !text.isEmpty {
             input = .text(text, mime: CapturedContext.webURL(text) == nil ? "text/plain" : "text/uri-list")
         } else { throw ClientError.message("Provide text, a URL or a file to send.") }
-        let id = try await QuickSend.send(input, target: target)
-        return .result(value: id, dialog: "Accepted by xlatch. Check Activity for the result.")
+        let receipt = try await QuickSend.send(input, target: target)
+        return .result(value: receipt.receipt, dialog: IntentDialog(stringLiteral: receipt.confirmation))
     }
 }
 
@@ -33,8 +33,8 @@ struct SendClipboardIntent: AppIntent {
     @MainActor func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         guard let text = UIPasteboard.general.string, !text.isEmpty else { throw ClientError.message("Copy text or a link first.") }
         let input = ShareInput.text(text, mime: CapturedContext.webURL(text) == nil ? "text/plain" : "text/uri-list")
-        let id = try await QuickSend.send(input, target: nil)
-        return .result(value: id, dialog: "Accepted by xlatch. Check Activity for the result.")
+        let receipt = try await QuickSend.send(input, target: nil)
+        return .result(value: receipt.receipt, dialog: IntentDialog(stringLiteral: receipt.confirmation))
     }
 }
 
@@ -59,8 +59,8 @@ struct SendScreenContextIntent: AppIntent {
             pageTitle: pageTitle, pageText: pageText, screenshotOCR: capture.ocr,
             clipboardURL: includeClipboard ? UIPasteboard.general.string.flatMap(CapturedContext.webURL) : nil, note: note)
         let input = try context.attaching(to: ShareInput.file(capture.jpeg, name: "screenshot.jpg", mime: "image/jpeg"))
-        let id = try await QuickSend.send(input, target: target)
-        return .result(value: id, dialog: "Screenshot accepted by xlatch. Check Activity for the result.")
+        let receipt = try await QuickSend.send(input, target: target)
+        return .result(value: receipt.receipt, dialog: IntentDialog(stringLiteral: receipt.confirmation))
     }
 }
 

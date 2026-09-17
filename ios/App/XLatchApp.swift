@@ -64,22 +64,39 @@ import OSLog
 }
 
 @main struct XLatchApp: App {
+    @UIApplicationDelegateAdaptor(OutboxLifecycle.self) private var lifecycle
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             Group {
-                if model.connection == nil { PairView() }
-                else if let status = model.enrollmentStatus, status.device_status != "active" { PendingEnrollmentView() }
+                if model.connection == nil {
+                    TabView {
+                        PairView().tabItem { Label("Connect", systemImage: "link") }
+                        OutboxView().tabItem { Label("Outbox", systemImage: "tray.and.arrow.up") }
+                    }
+                }
+                else if let status = model.enrollmentStatus, status.device_status != "active" {
+                    TabView {
+                        PendingEnrollmentView().tabItem { Label("Approval", systemImage: "person.badge.key") }
+                        OutboxView().tabItem { Label("Outbox", systemImage: "tray.and.arrow.up") }
+                    }
+                }
                 else {
                     TabView {
                         ActionsView().tabItem { Label("Actions", systemImage: "bolt") }
                         ActivityView().tabItem { Label("Activity", systemImage: "tray") }
+                        OutboxView().tabItem { Label("Outbox", systemImage: "tray.and.arrow.up") }
                         SettingsView().tabItem { Label("Server", systemImage: "externaldrive.connected.to.line.below") }
                     }
                 }
             }
             .environmentObject(model)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await OutboxDelivery.shared.drain(expedite: true) } }
+                else if phase == .background { OutboxBackground.schedule() }
+            }
+            .task { await OutboxDelivery.shared.drain(expedite: true) }
             .tint(Color(red: 0.12, green: 0.43, blue: 0.34))
             .onContinueUserActivity(CSSearchableItemActionType) { _ in
                 Task { await model.refresh() }
@@ -97,7 +114,10 @@ import OSLog
             }
             .task {
                 while !Task.isCancelled {
-                    if scenePhase == .active { await model.refresh() }
+                    if scenePhase == .active {
+                        await model.refresh()
+                        await OutboxDelivery.shared.drain()
+                    }
                     do { try await Task.sleep(for: .seconds(3)) } catch { break }
                 }
             }
@@ -189,7 +209,7 @@ struct ComposeView: View {
     @State private var picking = false
     @State private var submitting = false
     @State private var error: String?
-    @State private var submitted: Job?
+    @State private var submitted: OutboxItem?
     @State private var requestKey = UUID().uuidString
     var body: some View {
         Form {
@@ -209,7 +229,10 @@ struct ComposeView: View {
                     .disabled(submitting || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && file == nil))
             }
             if let submitted {
-                Section { NavigationLink("View submitted job") { JobView(id: submitted.id) } } footer: { Text("Your server has accepted this job. You can leave this screen.") }
+                Section {
+                    if let jobID = submitted.jobID { NavigationLink("View submitted job") { JobView(id: jobID) } }
+                    else { NavigationLink("View Outbox") { OutboxView() } }
+                } footer: { Text(submitted.confirmation) }
             }
         }.navigationTitle(capability.manifest.title)
             .fileImporter(isPresented: $picking, allowedContentTypes: [.item]) { result in
@@ -229,7 +252,8 @@ struct ComposeView: View {
             do {
                 let input = file ?? ShareInput.text(text, mime: capability.accepts("text/plain") ? "text/plain" : "text/uri-list")
                 guard capability.accepts(input.mime) else { throw ClientError.message("Choose a file of a supported type for this action.") }
-                submitted = try await model.client().invoke(capability, input: input, key: requestKey)
+                guard let connection = model.connection else { throw ClientError.message("Pair your server first.") }
+                submitted = try await OutboxDelivery.shared.submit(input, capability: capability, connection: connection, id: requestKey)
                 await model.refresh()
             } catch { self.error = error.localizedDescription }
         }
