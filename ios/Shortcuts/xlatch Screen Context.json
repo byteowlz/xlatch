@@ -75,11 +75,16 @@
           }
         },
         "sharedText": {
-          "WFSerializationType": "WFTextTokenAttachment",
+          "WFSerializationType": "WFTextTokenString",
           "Value": {
-            "Type": "ActionOutput",
-            "OutputUUID": "D4F49D23-DAD5-46DA-8135-ABF136721B1C",
-            "OutputName": "Text"
+            "string": "\ufffc",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "D4F49D23-DAD5-46DA-8135-ABF136721B1C",
+                "OutputName": "Text"
+              }
+            }
           }
         }
       }

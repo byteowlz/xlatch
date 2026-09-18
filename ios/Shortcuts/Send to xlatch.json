@@ -18,9 +18,14 @@
         },
         "UUID": "14257B98-59CC-4578-BE33-0AB6A261F466",
         "text": {
-          "WFSerializationType": "WFTextTokenAttachment",
+          "WFSerializationType": "WFTextTokenString",
           "Value": {
-            "Type": "ExtensionInput"
+            "string": "\ufffc",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ExtensionInput"
+              }
+            }
           }
         }
       }

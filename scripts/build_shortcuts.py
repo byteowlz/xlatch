@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    subprocess.run([sys.executable, str(ROOT / "scripts/test_shortcut_inputs.py")], check=True)
     destination = ROOT / "ios/App/Shortcuts"
     destination.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as temporary:
