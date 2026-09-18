@@ -77,8 +77,9 @@ handshakes. Set `XLATCH_TEST_TICKET` to an expiring ticket file for an isolated
 server with `echo` granted to run the opt-in Rust daemon round trip. Never put
 real pairing secrets in source or logs.
 
-Android SDK compilation/lint, emulator checks and real-device testing must all
-pass before treating this as a tested mobile release. Hardware biometric flows
+The debug APK compiles with SDK 35 and passes Android lint (no errors); its APK
+signature is verified. Emulator and real-device testing remain outstanding, so
+this is a development build, not a tested mobile release. Hardware biometric flows
 require a real compatible Android device. Remaining parity work includes file
 result export, identity-migration UI, signed recovery/revocation flows beyond the
 current protocol, notification deep links, Android theme-file import, launcher
