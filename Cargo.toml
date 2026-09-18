@@ -5,6 +5,7 @@ members = [
     "crates/xlatch-cli",
     "crates/xlatch-tui",
     "crates/xlatch-mcp",
+    "crates/xlatch-desktop",
     "crates/byteowlz-tui-kit",
 ]
 
@@ -18,6 +19,10 @@ keywords = ["cli", "automation", "capabilities"]
 categories = ["command-line-utilities"]
 
 [workspace.dependencies]
+tempfile = "3"
+gpui-kit = "=0.6.1"
+tray-icon = "0.24"
+image = { version = "0.25", default-features = false, features = ["png"] }
 time = "=0.3.46"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 # Shared across workspace

@@ -179,3 +179,15 @@ setup-secrets:
 # Build and install the iOS app; optionally specify a device name or ID.
 install-iphone device="":
     python3 scripts/install-iphone.py {{quote(device)}}
+
+# Open the optional native management window (daemon runs independently).
+desktop *args:
+    cargo run --locked -p xlatch-desktop --features desktop -- {{args}}
+
+# Open the management window with its optional native tray.
+desktop-tray *args:
+    cargo run --locked -p xlatch-desktop --features tray -- --tray {{args}}
+
+# Build a local, ad-hoc signed macOS bundle with the xlatch icon.
+desktop-bundle:
+    bash scripts/bundle-desktop-macos.sh
