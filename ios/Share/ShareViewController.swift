@@ -29,8 +29,13 @@ final class ShareViewController: UIViewController {
     @Published var error: String?
     private let context: NSExtensionContext?
     private var requestKeys: [String: String] = [:]
+    private var completed = false
     init(context: NSExtensionContext?) { self.context = context }
-    func done() { context?.completeRequest(returningItems: nil) }
+    func done() {
+        guard !completed else { return }
+        completed = true
+        context?.completeRequest(returningItems: nil)
+    }
     func load() async {
         loading = true; error = nil
         defer { loading = false }
@@ -87,6 +92,13 @@ struct ShareView: View {
                         Text(model.receipt?.confirmation ?? "Open xlatch’s Outbox to check delivery.").foregroundStyle(.secondary).multilineTextAlignment(.center)
                         Button("Done") { model.done() }.buttonStyle(.borderedProminent)
                     }.padding(28)
+                        .task {
+                            guard model.receipt?.state == .sent else { return }
+                            // Briefly confirm acceptance before returning to the source app.
+                            do { try await Task.sleep(for: .milliseconds(700)) }
+                            catch { return }
+                            model.done()
+                        }
                 } else {
                     List {
                         if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
