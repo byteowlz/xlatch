@@ -44,11 +44,11 @@ struct ShortcutSettingsView: View {
                 Text("Share the shortcut file to Shortcuts, then tap Add Shortcut. If Shortcuts is not offered, save it to Files and open it there. Your pairing keys stay in xlatch.")
             }
             Section {
-                shortcut("xlatch Share Text to Target", title: "Add text or link target")
-                shortcut("xlatch Share File to Target", title: "Add file target")
+                shortcut("Send to xlatch", title: "Add “Send to xlatch”")
+                shortcut("Send file to xlatch", title: "Add “Send file to xlatch”")
                 Text("Choose the target during import, then rename the shortcut, for example Send to Pi · Research. Add another copy for each target you want in the share sheet.")
                 Text("These shortcuts appear in the share sheet’s action list below the app icons. Each keeps its own target; changing the quick-send default does not redirect it.").foregroundStyle(.secondary)
-                Text("If setup did not ask for a target, edit the shortcut’s xlatch action and select Target once. In shortcut Details, Show in Share Sheet controls whether the entry appears. Remove the shortcut to remove its entry.").font(.caption).foregroundStyle(.secondary)
+                Text("To change an existing entry’s name, rename it in Shortcuts. If setup did not ask for a target, edit the shortcut’s xlatch action and select Target once. In shortcut Details, Show in Share Sheet controls whether the entry appears. Remove the shortcut to remove its entry.").font(.caption).foregroundStyle(.secondary)
             } header: { Text("Individual share-sheet targets") } footer: {
                 Text("Shared text and links use the text preset; files and images use the file preset. A confirmation shows whether the server accepted the share or it was saved on this iPhone. This does not mean the server action finished.")
             }
