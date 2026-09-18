@@ -47,33 +47,64 @@ struct PendingCapabilityApproval {
 
 struct CapabilityApprovalListView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var catalog: ApprovalCatalog?
     @State private var error: String?
+    @State private var loading = false
     var body: some View {
         List {
-            if let catalog {
-                if catalog.capabilities.isEmpty { Text("No registered actions").foregroundStyle(.secondary) }
-                ForEach(catalog.capabilities) { capability in
-                    NavigationLink {
-                        CapabilityApprovalSelectionView(capability: capability, devices: catalog.devices)
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(capability.manifest.title)
-                            Text("\(capability.id) · \(capability.status)").font(.caption).foregroundStyle(.secondary)
-                        }
+            if loading && catalog == nil { ProgressView("Checking approval access…") }
+            if let error {
+                Section {
+                    Text(error).foregroundStyle(.red)
+                    Button("Try again") { Task { await refresh() } }
+                }
+            } else if let catalog {
+                Section("Awaiting approval") {
+                    let pending = catalog.capabilities.filter { $0.status != "active" }
+                    if pending.isEmpty { Text("No actions awaiting approval").foregroundStyle(.secondary) }
+                    ForEach(pending) { capability in actionRow(capability, devices: catalog.devices) }
+                }
+                Section {
+                    ForEach(catalog.capabilities.filter { $0.status == "active" }) { capability in
+                        actionRow(capability, devices: catalog.devices)
                     }
+                } header: { Text("Active actions & device access") }
+                  footer: { Text("An active action also needs a grant for this phone before it appears in Actions or the share sheet.") }
+            } else if !loading, let status = model.enrollmentStatus {
+                Section("Approval access") {
+                    Text(status.enabled ? "This phone is a client, not an approver." : "Phone approval has not been set up for this server.")
+                    Text(status.enabled ? "Use the enrolled approver phone to approve new actions and grant access to this device." : "Set up this phone as an approver to review new actions with Face ID or Touch ID.")
+                        .foregroundStyle(.secondary)
+                    NavigationLink("Phone approval setup") { EnrollmentSettingsView() }
                 }
             }
-            if let error { Text(error).foregroundStyle(.red) }
         }
         .navigationTitle("Action approvals")
         .task { await refresh() }
         .refreshable { await refresh() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await refresh() } }
+        }
+    }
+    private func actionRow(_ capability: Capability, devices: [ApprovalTarget]) -> some View {
+        NavigationLink {
+            CapabilityApprovalSelectionView(capability: capability, devices: devices)
+        } label: {
+            VStack(alignment: .leading) {
+                Text(capability.manifest.title)
+                Text("\(capability.id) · \(capability.status)").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
     private func refresh() async {
+        guard !loading else { return }
+        loading = true; error = nil; catalog = nil
+        defer { loading = false }
         do {
-            catalog = try await model.client().rpc(["op": "approval", "request": ["action": "catalog"]])
-            error = nil
+            let client = try model.client()
+            guard try await model.refreshEnrollment(using: client), model.enrollmentStatus?.is_approver == true else { return }
+            catalog = try await client.rpc(["op": "approval", "request": ["action": "catalog"]])
         } catch { self.error = error.localizedDescription }
     }
 }

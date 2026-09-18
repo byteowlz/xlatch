@@ -87,7 +87,7 @@ import OSLog
                         ActionsView().tabItem { Label("Actions", systemImage: "bolt") }
                         ActivityView().tabItem { Label("Activity", systemImage: "tray") }
                         OutboxView().tabItem { Label("Outbox", systemImage: "tray.and.arrow.up") }
-                        SettingsView().tabItem { Label("Server", systemImage: "externaldrive.connected.to.line.below") }
+                        SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }
                     }
                 }
             }
@@ -180,9 +180,14 @@ struct ActionsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    NavigationLink { CapabilityApprovalListView() } label: {
+                        Label("Review actions & access", systemImage: "checkmark.shield")
+                    }
+                } footer: { Text("Approve new server actions and choose which devices can use them.") }
                 if let error = model.error { Section { Label(error, systemImage: "wifi.exclamationmark").foregroundStyle(.secondary) } }
                 if model.enabledCapabilities.isEmpty {
-                    ContentUnavailableView("No actions yet", systemImage: "bolt.slash", description: Text("Enable an action in Server settings, or grant this phone a new server action."))
+                    ContentUnavailableView("No actions yet", systemImage: "bolt.slash", description: Text("Review new actions below, or enable an existing action in Settings."))
                 } else {
                     Section {
                         ForEach(model.enabledCapabilities) { capability in
@@ -410,12 +415,10 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("Shortcuts & Back Tap") { ShortcutSettingsView() }
                     NavigationLink("Device approvals") { EnrollmentSettingsView() }
-                    if model.enrollmentStatus?.is_approver == true {
-                        NavigationLink("Action approvals") { CapabilityApprovalListView() }
-                    }
+                    NavigationLink("Action approvals & access") { CapabilityApprovalListView() }
                     NavigationLink("Update server identity") { ServerIdentityUpdateView() }
                 }
-            }.navigationTitle("Server").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
+            }.navigationTitle("Settings").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
         }
     }
 }
