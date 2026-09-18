@@ -319,6 +319,7 @@ impl Desktop {
         ];
         v_flex()
             .w(px(180.))
+            .flex_shrink_0()
             .h_full()
             .p_4()
             .gap_2()
@@ -378,7 +379,8 @@ impl Desktop {
             .gap_6()
             .child(
                 v_flex()
-                    .w(px(290.))
+                    .w(px(250.))
+                    .flex_shrink_0()
                     .h_full()
                     .gap_3()
                     .child(Input::new(&self.search))
@@ -443,13 +445,13 @@ impl Desktop {
         };
         let theme = cx.theme().clone();
         let needs_host_consent = matches!(action.manifest.execution, Execution::Command { .. });
-        v_flex().id("action-detail").flex_1().h_full().overflow_y_scroll().gap_3()
+        v_flex().id("action-detail").flex_1().min_w_0().h_full().overflow_y_scroll().gap_3().whitespace_normal()
             .child(div().text_2xl().child(SharedString::from(action.manifest.title.clone())))
-            .child(SharedString::from(action.manifest.description.clone()))
-            .child(div().text_xs().text_color(theme.muted_foreground).child(SharedString::from(format!("Revision {}",action.revision))))
+            .child(div().w_full().child(SharedString::from(action.manifest.description.clone())))
+            .child(div().id("revision").overflow_x_scroll().text_xs().text_color(theme.muted_foreground).child(SharedString::from(format!("Revision {}",action.revision))))
             .child(div().text_sm().child(SharedString::from(format!("Accepts {}",action.manifest.accepts.join(", ")))))
             .when(action.status == "active", |view| view
-                .child(h_flex().gap_2().child(div().flex_1().child(if self.raw_input { "JSON input" } else { "Text to send" }))
+                .child(h_flex().flex_wrap().gap_2().child(div().flex_1().child(if self.raw_input { "JSON input" } else { "Text to send" }))
                     .child(Button::new("input-mode").small().label(if self.raw_input { "Use text" } else { "Use JSON" }).on_click(cx.listener(|this,_,_,cx| {this.raw_input = !this.raw_input;this.draft=None;cx.notify();})))
                     .child(Button::new("paste").small().label("Paste text").on_click(cx.listener(|this,_,window,cx| this.paste(window,cx))))
                     .child(Button::new("new-run").small().label("New run").on_click(cx.listener(|this,_,_,cx| {this.draft=None;this.result=None;cx.notify();}))))
@@ -457,7 +459,7 @@ impl Desktop {
                 .child(Button::new("invoke").primary().label(if self.draft.is_some() {"Retry / retrieve same run"} else {"Run action"}).disabled(self.busy || self.snapshot.is_none()).on_click(cx.listener(|this,_,_,cx| this.invoke(cx))))
                 .child(div().text_xs().text_color(theme.muted_foreground).child("Retries keep the same job identity. Choose New run to execute again.")))
             .child(Button::new("contract").small().label(if self.show_contract { "Hide contract" } else { "Inspect contract & execution" }).on_click(cx.listener(|this,_,_,cx| {this.show_contract = !this.show_contract;cx.notify();})))
-            .when(self.show_contract || self.confirm_approval, |view| view.child(div().text_xs().child(SharedString::from(serde_json::to_string_pretty(&action.manifest).unwrap_or_default()))))
+            .when(self.show_contract || self.confirm_approval, |view| view.child(div().id("manifest").w_full().max_h(px(260.)).overflow_y_scroll().overflow_x_scroll().text_xs().child(SharedString::from(serde_json::to_string_pretty(&action.manifest).unwrap_or_default()))))
             .when(action.status != "active", |view| view
                 .child(Button::new("review").label("Review activation").disabled(self.busy).on_click(cx.listener(|this,_,_,cx| {this.confirm_approval=true;cx.notify();})))
                 .when(self.confirm_approval, |view| view
