@@ -1,6 +1,6 @@
 # Apple icon exports
 
-Generated from the approved SVGs in `logo/`, without changing the logo or wordmark.
+Generated from the approved SVGs in `logo/SVG/`, without changing the logo or wordmark.
 
 - `ios/xlatch_white_on_black_1024.png`: current iOS/iPadOS app icon. Opaque RGB, 1024×1024, square background. Xcode generates the smaller sizes from the existing universal asset entry.
 - `ios/xlatch_black_on_white_1024.png`: alternative default artwork, not automatically configured as an appearance variant.
@@ -17,7 +17,7 @@ These are conventional asset-catalog/ICNS exports, not layered Icon Composer doc
 3. **iOS flat icon:** extend an opaque background to all four edges. Do not draw rounded corners, outer transparent margins, or an outer drop shadow. iOS masks the square. Ensure the final exported PNG has no alpha channel, even if every pixel looks opaque.
 4. **Traditional macOS/Tauri icon:** use a separate square artboard with a transparent background and a rounded tile inside it. These exports fit the existing tile into a centered 896×896 area (64px nominal margins). That padding is an optical choice, not a mandatory Apple pixel measurement. Do not flatten these corners onto white or black.
 5. Export **artboards**, not selected artwork bounds: File → Export → Export for Screens → Artboards → PNG at **1×**. With Export As, enable **Use Artboards** and select **72 ppi** for a pixel-sized artboard. A 1024px artboard at 300 ppi would export roughly 4267px; the original 800px artboards at 300 ppi explain the roughly 3334px exports.
-6. Export SVG source using artboard bounds too. Verify a square `viewBox` and avoid fractional extra canvas. The original black-on-white macOS SVG currently has an 838.47×826 viewBox; the exporter preserves its proportions rather than stretching it.
+6. Export SVG source using artboard bounds too. Verify a square `viewBox` and avoid fractional extra canvas. The current SVG artboards are 1024×1024. Illustrator’s current `1x` PNGs are 1025×1025; check artboard X/Y pixel alignment and export bounds. This script renders the SVGs at exact target dimensions, so those PNGs are not used.
 7. Keep logo artwork, background, and any effects on separate layers for future Icon Composer work. Its layered workflow differs from the flat PNG/ICNS pipeline; do not bake platform masks into foreground layers.
 
 The `.ai` source/template has not been modified. Apply these settings in Illustrator, then regenerate exports.

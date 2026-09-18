@@ -12,12 +12,12 @@ trap 'rm -rf "$work"' EXIT
 for variant in white_on_black black_on_white; do
     background=black
     if [[ "$variant" == black_on_white ]]; then background=white; fi
-    rsvg-convert -w 1024 -h 1024 "logo/xlatch_logo_${variant}.svg" -o "$work/ios.png"
+    rsvg-convert -w 1024 -h 1024 "logo/SVG/${variant}.svg" -o "$work/ios.png"
     magick "$work/ios.png" -background "$background" -alpha remove -alpha off -colorspace sRGB \
         "PNG24:$out/ios/xlatch_${variant}_1024.png"
     # Fit the existing macOS tile proportionally into a centered 896px area.
     # 64px outer padding is our optical choice, not an App Store requirement.
-    rsvg-convert --keep-aspect-ratio -w 896 -h 896 "logo/xlatch_logo_mac_${variant}.svg" -o "$work/mac.png"
+    rsvg-convert --keep-aspect-ratio -w 896 -h 896 "logo/SVG/mac_${variant}.svg" -o "$work/mac.png"
     master="$out/macos/xlatch_${variant}_1024.png"
     magick "$work/mac.png" -background none -gravity center -extent 1024x1024 -colorspace sRGB "PNG32:$master"
     iconset="$out/macos/xlatch_${variant}.iconset"
