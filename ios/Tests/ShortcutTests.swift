@@ -1,4 +1,6 @@
 import XCTest
+import AppIntents
+import UniformTypeIdentifiers
 import UIKit
 import ImageIO
 @testable import XLatch
@@ -20,6 +22,18 @@ final class ShortcutTests: XCTestCase {
         ShareActionPreferences.save([action.id], deviceID: connection.deviceID)
         defer { ShareActionPreferences.save([], deviceID: connection.deviceID) }
         XCTAssertThrowsError(try QuickSend.resolve(id, connection: connection, capabilities: [action], mime: "image/jpeg"))
+    }
+
+    func testShareSheetInputUsesProvidedContentAndPreservesFiles() throws {
+        let url = try SendContentIntent.input(text: "https://example.test/post/123", file: nil)
+        XCTAssertEqual(url.mime, "text/uri-list")
+        XCTAssertEqual(url.payload["text"] as? String, "https://example.test/post/123")
+        let file = IntentFile(data: Data([0, 1, 2]), filename: "sample.bin", type: .data)
+        let input = try SendContentIntent.input(text: "Attached note", file: file)
+        XCTAssertEqual(input.payload["text"] as? String, "Attached note")
+        XCTAssertEqual(input.payload["file"] as? [String: String], ["name": "sample.bin", "mime_type": "application/octet-stream", "data_base64": "AAEC"])
+        XCTAssertThrowsError(try SendContentIntent.input(text: nil, file: nil))
+        XCTAssertThrowsError(try SendContentIntent.input(text: "", file: nil))
     }
 
     func testContextRetainsFileAndLabelsUntrustedSources() throws {

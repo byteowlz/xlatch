@@ -10,6 +10,11 @@ struct SendContentIntent: AppIntent {
     @Parameter(title: "File") var file: IntentFile?
     @Parameter(title: "Target") var target: XLatchTarget?
     @MainActor func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+        let input = try Self.input(text: text, file: file)
+        let receipt = try await QuickSend.send(input, target: target)
+        return .result(value: receipt.receipt, dialog: IntentDialog(stringLiteral: receipt.confirmation))
+    }
+    static func input(text: String?, file: IntentFile?) throws -> ShareInput {
         let input: ShareInput
         if let file {
             var value = try ShareInput.file(file.data, name: file.filename, mime: file.type?.preferredMIMEType ?? "application/octet-stream")
@@ -21,8 +26,30 @@ struct SendContentIntent: AppIntent {
         } else if let text, !text.isEmpty {
             input = .text(text, mime: CapturedContext.webURL(text) == nil ? "text/plain" : "text/uri-list")
         } else { throw ClientError.message("Provide text, a URL or a file to send.") }
+        return input
+    }
+
+}
+
+/// Unlike quick send, a share-sheet entry must pin its own target.
+struct SendToTargetIntent: AppIntent {
+    static var title: LocalizedStringResource = "Share to a specific xlatch target"
+    static var description = IntentDescription("Send shared text, a URL or a file to this shortcut's explicit target. Never uses the default quick-send target. Returns a delivery confirmation, not an execution result.")
+    static var authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
+    @Parameter(title: "Text or URL") var text: String?
+    @Parameter(title: "File") var file: IntentFile?
+    @Parameter(title: "Target") var target: XLatchTarget
+    static var parameterSummary: some ParameterSummary {
+        Summary("Share to \(\.$target)") {
+            \.$text
+            \.$file
+        }
+    }
+    @MainActor func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+        let input = try SendContentIntent.input(text: text, file: file)
         let receipt = try await QuickSend.send(input, target: target)
-        return .result(value: receipt.receipt, dialog: IntentDialog(stringLiteral: receipt.confirmation))
+        let confirmation = "\(receipt.confirmation)\nTarget: \(target.title) · \(target.server)"
+        return .result(value: confirmation, dialog: IntentDialog(stringLiteral: confirmation))
     }
 }
 

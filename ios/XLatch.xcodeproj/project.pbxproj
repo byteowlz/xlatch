@@ -53,6 +53,8 @@
 		F368C8D24D321162745E9F1E /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 998A46FC0928DECBD3CBDB9D /* QRScanner.swift */; };
 		F751373C1D48E2DE7B78CD70 /* EnrollmentApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */; };
 		FC5052853D3057BA3839D112 /* CapturedContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123CCF908036478345E434F3 /* CapturedContext.swift */; };
+		ACB8296CA8E74C55A8C7AFDC /* xlatch Share Text to Target.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 5F95DEF103D54D05B47A8119 /* xlatch Share Text to Target.shortcut */; };
+		31FD3DB61A7E4BFC99E426EE /* xlatch Share File to Target.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B50393CAA4124CB5B959259E /* xlatch Share File to Target.shortcut */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -129,6 +131,8 @@
 		E7642A427F252CBE0EB0CCB5 /* ShortcutSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutSettingsView.swift; sourceTree = "<group>"; };
 		F4C60EE037F5758DB6F33373 /* XLatchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XLatchShare.entitlements; sourceTree = "<group>"; };
 		FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */ = {isa = PBXFileReference; path = "xlatch Screenshot.shortcut"; sourceTree = "<group>"; };
+		5F95DEF103D54D05B47A8119 /* xlatch Share Text to Target.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "xlatch Share Text to Target.shortcut"; sourceTree = "<group>"; };
+		B50393CAA4124CB5B959259E /* xlatch Share File to Target.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "xlatch Share File to Target.shortcut"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -222,6 +226,8 @@
 			isa = PBXGroup;
 			children = (
 				824CF63C0CD8DD94858C01EA /* xlatch Clipboard.shortcut */,
+				B50393CAA4124CB5B959259E /* xlatch Share File to Target.shortcut */,
+				5F95DEF103D54D05B47A8119 /* xlatch Share Text to Target.shortcut */,
 				7D2E7410BF2894F1681273D0 /* xlatch Screen Context.shortcut */,
 				FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */,
 			);
@@ -338,6 +344,8 @@
 			files = (
 				8C7AAD581FD2AC5454B83505 /* Assets.xcassets in Resources */,
 				41A1512677F533C37E53ADC5 /* xlatch Clipboard.shortcut in Resources */,
+				31FD3DB61A7E4BFC99E426EE /* xlatch Share File to Target.shortcut in Resources */,
+				ACB8296CA8E74C55A8C7AFDC /* xlatch Share Text to Target.shortcut in Resources */,
 				080E8C4BC7B6C0AF2FE887C4 /* xlatch Screen Context.shortcut in Resources */,
 				4256F1E48E1ABD94980E3741 /* xlatch Screenshot.shortcut in Resources */,
 			);

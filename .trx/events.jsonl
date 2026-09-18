@@ -96,3 +96,5 @@
 {"id":"evt_bcnyc8y6","issue_id":"xltch-gtnn","action":"created","timestamp":"2026-09-18T18:26:55.988392Z"}
 {"id":"evt_81je7aqy","issue_id":"xltch-t2kq","action":"created","timestamp":"2026-09-18T18:34:01.760724Z"}
 {"id":"evt_be66amrx","issue_id":"xltch-t2kq","action":"closed","timestamp":"2026-09-18T18:34:01.782473Z","note":"Implemented 700 ms confirmation followed by dismissal only for server-accepted shares; iOS build passes."}
+{"id":"evt_cspj9bx0","issue_id":"xltch-h3tq","action":"created","timestamp":"2026-09-18T18:38:52.640865Z"}
+{"id":"evt_6r918tsv","issue_id":"xltch-h3tq","action":"updated","timestamp":"2026-09-18T18:38:52.666349Z","changes":[{"field":"status","from":"open","to":"in_progress"}]}

@@ -1,0 +1,68 @@
+{
+  "WFWorkflowClientVersion": "2106.0.3",
+  "WFWorkflowMinimumClientVersion": 900,
+  "WFWorkflowMinimumClientVersionString": "900",
+  "WFWorkflowIcon": {
+    "WFWorkflowIconGlyphNumber": 59511,
+    "WFWorkflowIconStartColor": 4251333119
+  },
+  "WFWorkflowActions": [
+    {
+      "WFWorkflowActionIdentifier": "com.byteowlz.xlatch.SendToTargetIntent",
+      "WFWorkflowActionParameters": {
+        "AppIntentDescriptor": {
+          "AppIntentIdentifier": "SendToTargetIntent",
+          "BundleIdentifier": "com.byteowlz.xlatch",
+          "TeamIdentifier": "K8RV7BFSRS",
+          "Name": "xlatch"
+        },
+        "UUID": "14257B98-59CC-4578-BE33-0AB6A261F466",
+        "text": {
+          "WFSerializationType": "WFTextTokenAttachment",
+          "Value": {
+            "Type": "ExtensionInput"
+          }
+        }
+      }
+    },
+    {
+      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionParameters": {
+        "Text": {
+          "WFSerializationType": "WFTextTokenString",
+          "Value": {
+            "string": "\ufffc",
+            "attachmentsByRange": {
+              "{0, 1}": {
+                "Type": "ActionOutput",
+                "OutputUUID": "14257B98-59CC-4578-BE33-0AB6A261F466",
+                "OutputName": "Delivery confirmation"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "WFWorkflowInputContentItemClasses": [
+    "WFURLContentItem",
+    "WFStringContentItem"
+  ],
+  "WFWorkflowTypes": [
+    "ActionExtension"
+  ],
+  "WFWorkflowHasShortcutInputVariables": true,
+  "WFWorkflowImportQuestions": [
+    {
+      "Category": "Parameter",
+      "ActionIndex": 0,
+      "ParameterKey": "target",
+      "Text": "Choose the xlatch target for this share-sheet shortcut.",
+      "DefaultValue": ""
+    }
+  ],
+  "WFWorkflowOutputContentItemClasses": [
+    "WFStringContentItem"
+  ],
+  "WFWorkflowNoInputBehavior": {}
+}
