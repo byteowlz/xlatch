@@ -191,3 +191,15 @@ desktop-tray *args:
 # Build a local, ad-hoc signed macOS bundle with the xlatch icon.
 desktop-bundle:
     bash scripts/bundle-desktop-macos.sh
+
+# Android protocol tests run without an Android SDK.
+android-test:
+    cd android && ./gradlew :protocol:test
+
+# Build and lint the Android debug APK (requires Android SDK 35).
+android-build:
+    cd android && ./gradlew :protocol:test :app:assembleDebug :app:lintDebug
+
+# Install on the connected Android device; ANDROID_SERIAL selects among devices.
+install-android: android-build
+    adb install -r android/app/build/outputs/apk/debug/app-debug.apk

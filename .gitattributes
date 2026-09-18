@@ -1,2 +1,5 @@
 .trx/issues.jsonl text eol=lf merge=union
 .trx/events.jsonl text eol=lf merge=union
+
+android/gradlew text eol=lf
+android/gradlew.bat text eol=crlf

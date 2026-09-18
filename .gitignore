@@ -80,3 +80,14 @@ server.der
 *.sqlite3-shm
 *.sqlite3-wal
 control.sock
+
+# Android local build / SDK state
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+/android/**/build/
+*.jks
+*.keystore
+
+# Keep the checksum-pinned Android Gradle wrapper.
+!android/gradle/wrapper/gradle-wrapper.jar
