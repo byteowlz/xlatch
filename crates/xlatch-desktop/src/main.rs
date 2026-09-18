@@ -1,4 +1,5 @@
 //! Native xlatch management app. The daemon remains an independent process.
+mod appearance;
 #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
 mod tray;
 mod ui;
@@ -20,6 +21,9 @@ struct Options {
     /// Show an optional system tray icon (requires the tray build feature).
     #[arg(long)]
     tray: bool,
+    /// auto, dark, light, or an absolute JSON/TOML palette path.
+    #[arg(long, default_value = "auto")]
+    theme: String,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -32,14 +36,7 @@ fn main() -> anyhow::Result<()> {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            {
-                let theme = gpui_kit::component::Theme::global_mut(cx);
-                theme.colors.primary = gpui_kit::rgb(0x001f_6e57).into();
-                theme.colors.primary_hover = gpui_kit::rgb(0x0018_5943).into();
-                theme.colors.primary_active = gpui_kit::rgb(0x0012_4735).into();
-                theme.colors.primary_foreground = gpui_kit::rgb(0x00ff_ffff).into();
-            }
-            gpui_kit::component::Theme::sync_base(cx);
+            appearance::init(options.theme, cx);
             let bounds = WindowBounds::centered(size(px(1100.), px(760.)), cx);
             cx.spawn(async move |cx| {
                 let result = cx.open_window(

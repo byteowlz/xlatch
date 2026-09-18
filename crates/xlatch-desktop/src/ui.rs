@@ -312,19 +312,36 @@ impl Desktop {
     fn sidebar(&self, cx: &Context<'_, Self>) -> impl IntoElement + use<> {
         let theme = cx.theme().clone();
         let pages = [
-            (Page::Actions, "Actions"),
-            (Page::Activity, "Activity"),
-            (Page::Connection, "Connection"),
-            (Page::Settings, "Settings"),
+            (
+                Page::Actions,
+                "Actions",
+                gpui_kit::assets::IconName::LayoutGrid,
+            ),
+            (
+                Page::Activity,
+                "Activity",
+                gpui_kit::assets::IconName::Activity,
+            ),
+            (
+                Page::Connection,
+                "Connection",
+                gpui_kit::assets::IconName::Server,
+            ),
+            (
+                Page::Settings,
+                "Settings",
+                gpui_kit::assets::IconName::Settings,
+            ),
         ];
         v_flex()
-            .w(px(180.))
+            .w(px(200.))
             .flex_shrink_0()
             .h_full()
             .p_4()
             .gap_2()
             .border_r_1()
             .border_color(theme.border)
+            .bg(theme.sidebar)
             .child(
                 div()
                     .text_2xl()
@@ -332,30 +349,34 @@ impl Desktop {
                     .mb_4()
                     .child("xlatch"),
             )
-            .children(pages.into_iter().enumerate().map(|(i, (page, label))| {
-                div()
-                    .id(("nav", i))
-                    .px_3()
-                    .py_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .bg(if self.page == page {
-                        theme.secondary
-                    } else {
-                        theme.background
-                    })
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page = page;
-                        cx.notify();
-                    }))
-            }))
+            .children(
+                pages
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (page, label, icon))| {
+                        Button::new(("nav", i))
+                            .ghost()
+                            .w_full()
+                            .justify_start()
+                            .icon(gpui_kit::component::Icon::new(icon))
+                            .label(label)
+                            .bg(if self.page == page {
+                                theme.sidebar_accent
+                            } else {
+                                theme.sidebar
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.page = page;
+                                cx.notify();
+                            }))
+                    }),
+            )
             .child(div().flex_1())
             .child(
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child("LOCAL OPERATOR"),
+                    .child("Local operator"),
             )
             .child(div().text_sm().child(if self.snapshot.is_some() {
                 "Connected"
@@ -403,8 +424,9 @@ impl Desktop {
                                             .py_3()
                                             .gap_1()
                                             .mb_1()
-                                            .rounded_md()
+                                            .rounded(cx.theme().radius * 1.5)
                                             .cursor_pointer()
+                                            .hover(|style| style.bg(theme.list_hover))
                                             .bg(if selected {
                                                 theme.secondary
                                             } else {
@@ -439,15 +461,16 @@ impl Desktop {
                 .gap_3()
                 .pt_8()
                 .child(div().text_xl().child("Choose an action"))
-                .child("Search your server’s registry, inspect an action, then provide its input.")
-                .child("Pending actions need review before they can run.")
+                .min_w_0()
+                .child(div().text_color(cx.theme().muted_foreground).child("Choose where to send your content. Search by name or purpose, then press Enter."))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Command / Ctrl + K opens search. Pending actions need your review."))
                 .into_any_element();
         };
         let theme = cx.theme().clone();
         let needs_host_consent = matches!(action.manifest.execution, Execution::Command { .. });
         v_flex().id("action-detail").flex_1().min_w_0().h_full().overflow_y_scroll().gap_3().whitespace_normal()
-            .child(div().text_2xl().child(SharedString::from(action.manifest.title.clone())))
-            .child(div().w_full().child(SharedString::from(action.manifest.description.clone())))
+            .child(div().text_2xl().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(SharedString::from(action.manifest.title.clone())))
+            .child(div().w_full().text_color(theme.muted_foreground).child(SharedString::from(action.manifest.description.clone())))
             .child(div().id("revision").overflow_x_scroll().text_xs().text_color(theme.muted_foreground).child(SharedString::from(format!("Revision {}",action.revision))))
             .child(div().text_sm().child(SharedString::from(format!("Accepts {}",action.manifest.accepts.join(", ")))))
             .when(action.status == "active", |view| view
@@ -459,7 +482,7 @@ impl Desktop {
                 .child(Button::new("invoke").primary().label(if self.draft.is_some() {"Retry / retrieve same run"} else {"Run action"}).disabled(self.busy || self.snapshot.is_none()).on_click(cx.listener(|this,_,_,cx| this.invoke(cx))))
                 .child(div().text_xs().text_color(theme.muted_foreground).child("Retries keep the same job identity. Choose New run to execute again.")))
             .child(Button::new("contract").small().label(if self.show_contract { "Hide contract" } else { "Inspect contract & execution" }).on_click(cx.listener(|this,_,_,cx| {this.show_contract = !this.show_contract;cx.notify();})))
-            .when(self.show_contract || self.confirm_approval, |view| view.child(div().id("manifest").w_full().max_h(px(260.)).overflow_y_scroll().overflow_x_scroll().text_xs().child(SharedString::from(serde_json::to_string_pretty(&action.manifest).unwrap_or_default()))))
+            .when(self.show_contract || self.confirm_approval, |view| view.child(div().id("manifest").w_full().p_3().bg(theme.sidebar).rounded(theme.radius * 1.5).font_family(theme.mono_font_family.clone()).max_h(px(260.)).overflow_y_scroll().overflow_x_scroll().text_xs().child(SharedString::from(serde_json::to_string_pretty(&action.manifest).unwrap_or_default()))))
             .when(action.status != "active", |view| view
                 .child(Button::new("review").label("Review activation").disabled(self.busy).on_click(cx.listener(|this,_,_,cx| {this.confirm_approval=true;cx.notify();})))
                 .when(self.confirm_approval, |view| view
@@ -553,9 +576,16 @@ impl Desktop {
             .child("Paired remote connections are not available in this first desktop build.")
     }
 
-    fn settings() -> impl IntoElement + use<> {
+    fn settings(cx: &Context<'_, Self>) -> impl IntoElement + use<> {
+        let appearance = cx.global::<crate::appearance::Appearance>();
         v_flex().gap_4().max_w(px(620.))
-            .child("Quick launch")
+            .child(div().text_lg().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Appearance"))
+            .child(h_flex().gap_2().children([("auto","Follow system"),("light","Light"),("dark","Dark")].into_iter().map(|(choice,label)| {
+                Button::new(choice).label(label).when(appearance.choice == choice, Button::primary).on_click(cx.listener(move |_,_,_,cx| crate::appearance::select(choice,cx)))
+            })))
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(appearance.status.clone()))
+            .child("Automatic mode follows xlatch/theme.toml or theme.json, then Omarchy’s active palette, then system light/dark. Theme files reload automatically.")
+            .child(div().pt_4().text_lg().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Quick launch"))
             .child("Press Command/Ctrl+K to jump to action search. Use --quick when launching from omni or a system shortcut.")
             .child("Optional tray")
             .child("Start with --tray in a tray-enabled build for quick access to search and activity. Closing the window does not stop the server.")
@@ -621,7 +651,7 @@ impl Render for Desktop {
                         Page::Actions => self.actions(cx).into_any_element(),
                         Page::Activity => self.activity(cx).into_any_element(),
                         Page::Connection => self.connection(cx).into_any_element(),
-                        Page::Settings => Self::settings().into_any_element(),
+                        Page::Settings => Self::settings(cx).into_any_element(),
                     })
                     .when_some(self.result.clone(), |view, result| {
                         view.child(
@@ -641,11 +671,20 @@ impl Render for Desktop {
                                         }),
                                     ),
                                 ))
-                                .child(div().id("response").overflow_y_scroll().text_xs().child(
-                                    SharedString::from(
-                                        serde_json::to_string_pretty(&result).unwrap_or_default(),
-                                    ),
-                                )),
+                                .child(
+                                    div()
+                                        .id("response")
+                                        .p_3()
+                                        .bg(theme.sidebar)
+                                        .font_family(theme.mono_font_family.clone())
+                                        .overflow_y_scroll()
+                                        .overflow_x_scroll()
+                                        .text_xs()
+                                        .child(SharedString::from(
+                                            serde_json::to_string_pretty(&result)
+                                                .unwrap_or_default(),
+                                        )),
+                                ),
                         )
                     }),
             )

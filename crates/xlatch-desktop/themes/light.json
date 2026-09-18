@@ -1,0 +1,32 @@
+{
+  "name": "xlatch Light",
+  "system": "base24",
+  "mode": "light",
+  "radius": 8,
+  "slots": {
+    "base00": "#f7f9f6",
+    "base01": "#e8eee7",
+    "base02": "#d9e3d7",
+    "base03": "#718370",
+    "base04": "#50634f",
+    "base05": "#243325",
+    "base06": "#172519",
+    "base07": "#0d190f",
+    "base08": "#ac4046",
+    "base09": "#9c5b27",
+    "base0A": "#816917",
+    "base0B": "#246949",
+    "base0C": "#286a69",
+    "base0D": "#365f94",
+    "base0E": "#715294",
+    "base0F": "#795942",
+    "base10": "#eff3ed",
+    "base11": "#e6ede3",
+    "base12": "#ef9295",
+    "base13": "#ecdb92",
+    "base14": "#94d7b5",
+    "base15": "#9cddd7",
+    "base16": "#a8cff1",
+    "base17": "#cfb7ed"
+  }
+}

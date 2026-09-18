@@ -25,6 +25,8 @@ required-features = ["desktop"]
 [dependencies]
 xlatch-core = { path = "../xlatch-core" }
 anyhow.workspace = true
+toml.workspace = true
+dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

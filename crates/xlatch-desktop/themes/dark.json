@@ -1,0 +1,32 @@
+{
+  "name": "xlatch Dark",
+  "system": "base24",
+  "mode": "dark",
+  "radius": 8,
+  "slots": {
+    "base00": "#181d1b",
+    "base01": "#232a27",
+    "base02": "#303b35",
+    "base03": "#667a6d",
+    "base04": "#a3b5a9",
+    "base05": "#dfe8e1",
+    "base06": "#edf3ef",
+    "base07": "#ffffff",
+    "base08": "#df777a",
+    "base09": "#d7a06b",
+    "base0A": "#dac77d",
+    "base0B": "#77bd9d",
+    "base0C": "#7ec6bf",
+    "base0D": "#8ab4df",
+    "base0E": "#b69cda",
+    "base0F": "#bc9a84",
+    "base10": "#121714",
+    "base11": "#0e1310",
+    "base12": "#ef9295",
+    "base13": "#ecdb92",
+    "base14": "#94d7b5",
+    "base15": "#9cddd7",
+    "base16": "#a8cff1",
+    "base17": "#cfb7ed"
+  }
+}

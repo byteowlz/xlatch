@@ -1,5 +1,7 @@
 //! Desktop presentation data and transport. No GPUI dependency in the default build.
 
+pub mod palette;
+
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

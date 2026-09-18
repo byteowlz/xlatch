@@ -40,3 +40,7 @@ This is not a durable desktop outbox. The app never opens the server database.
   activation. Do not depend on Omni's current implementation.
 - `oqto`: consumes the same capability protocol; desktop presentation must not
   introduce another registry or authorization policy.
+
+Appearance follows Base16/Base24, Omarchy or the system's light/dark mode, with
+live reload and explicit overrides in Settings. See [theming](THEMING.md) for
+palette formats and the Tinty hook.
