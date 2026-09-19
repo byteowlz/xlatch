@@ -996,3 +996,234 @@ fn capability_approval_rechecks_races_expiry_and_rejection_atomically() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn routing_history_is_opt_in_scoped_and_preserves_retry_identity() -> Result<()> {
+    use xlatch_core::history::{Capture, HistoryPolicy};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve(&cap.manifest.id, &cap.revision, false)?;
+    let input = json!({"text":"private content"});
+    store.invoke(
+        "local",
+        &cap.manifest.id,
+        &cap.revision,
+        &input,
+        "before-opt-in",
+    )?;
+    assert!(store.history(None)?.is_empty());
+    let policy = HistoryPolicy {
+        capture: Capture::Metadata,
+        ..HistoryPolicy::default()
+    };
+    store.set_history_policy(&policy)?;
+    let job = store.invoke("local", &cap.manifest.id, &cap.revision, &input, "captured")?;
+    assert_eq!(
+        store
+            .invoke("local", &cap.manifest.id, &cap.revision, &input, "captured")?
+            .id,
+        job.id
+    );
+    let records = store.history(Some("local"))?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["job_id"], job.id);
+    assert_eq!(records[0]["choice_provenance"], "unknown");
+    assert!(!serde_json::to_string(&records)?.contains("private content"));
+    assert!(store.history(Some("different-owner"))?.is_empty());
+    assert_eq!(store.purge_history(Some("different-owner"))?, 0);
+    assert_eq!(store.purge_history(Some("local"))?, 1);
+    assert_eq!(
+        store
+            .invoke("local", &cap.manifest.id, &cap.revision, &input, "captured")?
+            .id,
+        job.id
+    );
+    assert!(store.history(None)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn routing_history_bounds_exclusions_and_restart() -> Result<()> {
+    use xlatch_core::history::{Capture, HistoryPolicy};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve(&cap.manifest.id, &cap.revision, false)?;
+    let mut policy = HistoryPolicy {
+        capture: Capture::Content,
+        max_rows: 1,
+        ..HistoryPolicy::default()
+    };
+    store.set_history_policy(&policy)?;
+    for key in ["one", "two"] {
+        store.invoke(
+            "local",
+            &cap.manifest.id,
+            &cap.revision,
+            &json!({"text":key}),
+            key,
+        )?;
+    }
+    assert_eq!(fixture.store()?.history(None)?.len(), 1);
+    assert_eq!(fixture.store()?.history_policy()?, policy);
+    policy.excluded_capabilities.push(cap.manifest.id.clone());
+    store.set_history_policy(&policy)?;
+    store.purge_history(None)?;
+    store.invoke(
+        "local",
+        &cap.manifest.id,
+        &cap.revision,
+        &json!({"text":"excluded"}),
+        "excluded",
+    )?;
+    assert!(store.history(None)?.is_empty());
+    policy.retention_days = 0;
+    assert!(store.set_history_policy(&policy).is_err());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn protected_commands_reject_user_owned_entry_points() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let program = fixture.0.join("mutable-script");
+    std::fs::write(&program, "#!/usr/bin/env sh\necho unsafe\n")?;
+    assert!(xlatch_core::host_trust::command(program.to_str().context("path")?).is_err());
+    xlatch_core::host_trust::command("/bin/sh")?;
+    Ok(())
+}
+
+fn recovery_rpc(
+    store: &mut Store,
+    owner: &str,
+    request: xlatch_core::recovery::RecoveryRequest,
+) -> Result<serde_json::Value> {
+    enrollment_rpc(
+        store,
+        owner,
+        xlatch_core::enrollment::EnrollmentRequest::Recovery { request },
+    )
+}
+fn recovery_decision(
+    payload: &str,
+    key: &p256::ecdsa::SigningKey,
+) -> Result<xlatch_core::recovery::RecoveryRequest> {
+    let review: xlatch_core::recovery::Review = serde_json::from_str(payload)?;
+    let sig: p256::ecdsa::Signature =
+        key.sign(&xlatch_core::recovery::decision_bytes(payload, true));
+    Ok(xlatch_core::recovery::RecoveryRequest::Decide {
+        id: review.id,
+        approve: true,
+        signature: STANDARD.encode(sig.to_der().as_bytes()),
+    })
+}
+#[test]
+fn backup_approver_requires_independent_signature_and_can_revoke_lost_phone() -> Result<()> {
+    use xlatch_core::recovery::{RecoveryRequest, proof_bytes};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (original, _) = pair(&mut store, 100)?;
+    let (backup, _) = pair(&mut store, 101)?;
+    let original_key = enable_guard(&mut store, &original)?;
+    let backup_key = p256::ecdsa::SigningKey::from_slice(&[55; 32])?;
+    let public_key = STANDARD.encode(
+        backup_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes(),
+    );
+    let signature: p256::ecdsa::Signature = backup_key.sign(&proof_bytes(
+        &store.server_identity()?,
+        &backup,
+        &public_key,
+    ));
+    let proposal = RecoveryRequest::Propose {
+        public_key,
+        signature: STANDARD.encode(signature.to_der().as_bytes()),
+    };
+    assert!(recovery_rpc(&mut store, "local", proposal.clone()).is_err());
+    let raw = recovery_rpc(&mut store, &backup, proposal)?;
+    let payload = raw.as_str().context("review")?;
+    assert!(
+        recovery_rpc(
+            &mut store,
+            &backup,
+            recovery_decision(payload, &backup_key)?
+        )
+        .is_err()
+    );
+    let changed = payload.replace("add", "remove");
+    assert!(
+        recovery_rpc(
+            &mut store,
+            &original,
+            recovery_decision(&changed, &original_key)?
+        )
+        .is_err()
+    );
+    let decision = recovery_decision(payload, &original_key)?;
+    recovery_rpc(&mut store, &original, decision.clone())?;
+    assert!(recovery_rpc(&mut store, &original, decision).is_err());
+    assert!(store.revoke(&original).is_err());
+    let raw = recovery_rpc(
+        &mut store,
+        &backup,
+        RecoveryRequest::Remove {
+            device_id: original.clone(),
+        },
+    )?;
+    recovery_rpc(
+        &mut store,
+        &backup,
+        recovery_decision(raw.as_str().context("remove review")?, &backup_key)?,
+    )?;
+    assert!(recovery_rpc(&mut store, &original, RecoveryRequest::Status).is_err());
+    assert!(
+        recovery_rpc(
+            &mut store,
+            &backup,
+            RecoveryRequest::Remove {
+                device_id: backup.clone()
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        recovery_rpc(&mut store, &backup, RecoveryRequest::Status)?["approvers"]
+            .as_array()
+            .context("approvers")?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn content_history_omits_binary_and_enforces_expiry_without_deleting_jobs() -> Result<()> {
+    use xlatch_core::history::{Capture, HistoryPolicy};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let mut action = manifest();
+    action.input_schema = json!({"type":"object"});
+    let cap = store.register(&action)?;
+    store.approve("echo", &cap.revision, false)?;
+    store.set_history_policy(&HistoryPolicy {
+        capture: Capture::Content,
+        ..HistoryPolicy::default()
+    })?;
+    let input = json!({"text":"retained", "file":{"name":"note.txt","data_base64":"c2VjcmV0"}});
+    let job = store.invoke("local", "echo", &cap.revision, &input, "binary")?;
+    let records = store.history(None)?;
+    assert_eq!(
+        records[0]["input"],
+        json!({"text":"retained","file":{"name":"note.txt"}})
+    );
+    let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    conn.execute("UPDATE routing_history SET created_at=0", [])?;
+    assert!(store.history(None)?.is_empty());
+    assert_eq!(store.job("local", &job.id)?.input, input);
+    Ok(())
+}

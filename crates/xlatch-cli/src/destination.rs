@@ -69,3 +69,15 @@ pub async fn add(
     }
     Ok(serde_json::from_value(approved)?)
 }
+
+/// Run an operator-selected destination command.
+pub async fn dispatch(dir: &std::path::Path, command: Command) -> anyhow::Result<()> {
+    let Command::Add {
+        name,
+        directory,
+        device,
+    } = command;
+    let capability = add(dir, &name, directory, device.as_deref()).await?;
+    println!("{}", serde_json::to_string_pretty(&capability)?);
+    Ok(())
+}

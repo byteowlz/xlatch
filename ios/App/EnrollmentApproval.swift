@@ -109,10 +109,18 @@ enum ApprovalKey {
             return ["public_key": publicKey, "signature": try key.signature(for: bytes).derRepresentation.base64EncodedString()]
         }.value
     }
+    static func proposeBackup(connection: Connection, serverID: String) async throws -> [String: String] {
+        try await Task.detached {
+            let key = try key(connection, create: true, reason: "Request approval authority for this phone")
+            let publicKey = key.publicKey.x963Representation.base64EncodedString()
+            let bytes = Data("xlatch.approver.proof.v1\n\(serverID)\n\(connection.deviceID)\n\(publicKey)".utf8)
+            return ["public_key": publicKey, "signature": try key.signature(for: bytes).derRepresentation.base64EncodedString()]
+        }.value
+    }
     static func signCapability(connection: Connection, pending: PendingCapabilityApproval, approve: Bool) async throws -> String {
         try await signBytes(connection: connection, bytes: pending.signingBytes(approve: approve), reason: approve ? "Approve this action and device access in xlatch" : "Reject this action request in xlatch")
     }
-    private static func signBytes(connection: Connection, bytes: Data, reason: String) async throws -> String {
+    static func signBytes(connection: Connection, bytes: Data, reason: String) async throws -> String {
         try await Task.detached {
             let key = try key(connection, create: false, reason: reason)
             return try key.signature(for: bytes).derRepresentation.base64EncodedString()
@@ -137,13 +145,16 @@ struct EnrollmentSettingsView: View {
                     LabeledContent("New devices", value: status.enabled ? "Phone approval required" : "QR pairing")
                     LabeledContent("This phone", value: status.is_approver ? "Approver" : "Client")
                 } footer: { Text("Enrollment approval does not protect against agents that can modify the server itself. Protected service installation is required for that boundary.") }
+                if status.enabled {
+                    Section { NavigationLink("Backup approvers & recovery") { BackupApproversView() } }
+                }
                 if !status.enabled, let connection = model.connection {
                     Section("Enable phone approval") {
                         Text("On your server, run:")
                         Text("xlatch enrollment-bootstrap \(connection.deviceID)").font(.caption.monospaced()).textSelection(.enabled)
                         Button("Scan setup code") { scanningSetup = true }.disabled(busy)
                         SecureField("Or paste the one-time token", text: $token).autocorrectionDisabled().textInputAutocapitalization(.never)
-                        Text("Keep this phone and its biometrics available. Changing enrolled biometrics invalidates its approval key. Recovery currently requires setting up a new server identity and pairing all devices again.").font(.footnote).foregroundStyle(.secondary)
+                        Text("Keep this phone and its biometrics available. Changing enrolled biometrics invalidates its approval key. Set up a second approver before losing access to this phone. If all approval keys are lost, create a new server identity and pair devices again.").font(.footnote).foregroundStyle(.secondary)
                         Button("Enable with Face ID or Touch ID") { enable(status: status, connection: connection) }.disabled(busy || token.count != 64)
                     }
                 }

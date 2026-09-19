@@ -60,24 +60,9 @@ pub fn load(path: Option<&Path>, data: &Path) -> Result<Option<Config>> {
 }
 
 #[cfg(unix)]
-pub fn admin_path(path: &Path) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    ensure!(path.is_absolute(), "protected paths must be absolute");
-    // Check the supplied path as well as the target: a user-owned symlink to a
-    // root-owned target must not pass, because it can be retargeted after startup.
-    for path in [path.to_path_buf(), std::fs::canonicalize(path)?] {
-        for parent in path.ancestors() {
-            let meta = std::fs::symlink_metadata(parent)?;
-            ensure!(
-                meta.uid() == 0 && (meta.file_type().is_symlink() || meta.mode() & 0o022 == 0),
-                "protected path must be administrator-owned and not group/world writable: {}",
-                parent.display()
-            );
-            check_acl(parent)?;
-        }
-    }
-    Ok(())
-}
+pub use xlatch_core::host_trust::admin_path;
+#[cfg(unix)]
+use xlatch_core::host_trust::check_acl;
 
 #[cfg(unix)]
 fn private_path(path: &Path, uid: u32, mode: u32) -> Result<()> {
@@ -93,32 +78,6 @@ fn private_path(path: &Path, uid: u32, mode: u32) -> Result<()> {
         path.parent()
             .context("protected directory needs an administrator-owned parent")?,
     )
-}
-
-#[cfg(unix)]
-fn check_acl(path: &Path) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("/bin/ls")
-            .args(["-lde"])
-            .arg(path)
-            .output()?;
-        ensure!(output.status.success(), "cannot inspect protected path ACL");
-        let text = String::from_utf8(output.stdout)?;
-        for line in text.lines().skip(1) {
-            ensure!(
-                !(line.contains(" allow ")
-                    && ["write", "add_file", "add_subdirectory", "delete", "chown"]
-                        .iter()
-                        .any(|right| line.contains(right))),
-                "protected path has a writable ACL: {}",
-                path.display()
-            );
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    let _ = path;
-    Ok(())
 }
 
 pub async fn run_executor(control_dir: PathBuf, work_dir: PathBuf) -> Result<()> {

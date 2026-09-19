@@ -46,3 +46,10 @@ pub mod local;
 pub mod service;
 pub mod store;
 pub mod worker;
+
+pub mod history;
+
+#[cfg(unix)]
+pub mod host_trust;
+
+pub mod recovery;

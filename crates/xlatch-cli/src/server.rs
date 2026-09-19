@@ -73,6 +73,7 @@ pub async fn run(data_dir: PathBuf, mut cli: Options) -> Result<()> {
     listener.set_nonblocking(true)?;
     let address = listener.local_addr()?;
     let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(xlatch_core::history::maintain(data_dir.clone()));
     tasks.spawn(crate::tls::maintain(
         data_dir.clone(),
         cli.listen,

@@ -18,6 +18,14 @@ final class EnrollmentTests: XCTestCase {
         XCTAssertThrowsError(try PendingEnrollment(payload.replacingOccurrences(of: "[\"echo\",\"revision\"]", with: "[\"echo\"]"), serverID: "server"))
         XCTAssertThrowsError(try PendingEnrollment(payload.replacingOccurrences(of: "\"policy_version\":1", with: "\"policy_version\":2"), serverID: "server"))
     }
+    func testBackupReviewBindsOperationIdentityAndExactBytes() throws {
+        let raw = #"{"id":"review","server_id":"server","operation":"add","device_id":"backup","name":"Phone","request_key":"request","public_key":"approval","expires_at":1}"#
+        let review = try PendingApprover(raw, serverID: "server")
+        XCTAssertEqual(String(data: review.signingBytes(approve: true), encoding: .utf8), "xlatch.approver.decision.v1\napprove\n" + raw)
+        XCTAssertNotEqual(review.signingBytes(approve: true), review.signingBytes(approve: false))
+        XCTAssertThrowsError(try PendingApprover(raw, serverID: "another-server"))
+        XCTAssertThrowsError(try PendingApprover(raw.replacingOccurrences(of: "add", with: "unknown"), serverID: "server"))
+    }
     func testSimulatorCannotCreateApprovalKey() async throws {
         guard !ApprovalKey.deviceSupportsApprovals else { throw XCTSkip("Physical device approval needs deliberate user interaction.") }
         let connection = Connection(url: "https://localhost", pin: "pin", deviceID: "test", privateKey: Data())

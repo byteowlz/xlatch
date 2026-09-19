@@ -21,6 +21,7 @@
 		41A1512677F533C37E53ADC5 /* xlatch Clipboard.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 824CF63C0CD8DD94858C01EA /* xlatch Clipboard.shortcut */; };
 		4256F1E48E1ABD94980E3741 /* xlatch Screenshot.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */; };
 		448FCE6DA5D3841C1FD57E23 /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
+		45162FFEF51F54070161B42F /* BackupApproversView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A07AE253CA8A1E384C66516E /* BackupApproversView.swift */; };
 		5134A4D24BBBBDDD292AFF43 /* ScreenshotCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52C6A57003E9930DC90F2CF2 /* ScreenshotCapture.swift */; };
 		585B43632F0843E183457180 /* UploadProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82186D9ED51FA21A435FE8F /* UploadProgress.swift */; };
 		656F59C7179FDF632D13ACED /* OutboxItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E493BDC12A16E688518DBE43 /* OutboxItem.swift */; };
@@ -43,7 +44,9 @@
 		AF827541050C8C9A9ACF0C4E /* OutboxBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6378269A6E0476B71D4A7084 /* OutboxBackground.swift */; };
 		C302FEA68688AFCA0FE53D73 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */; };
 		C5A82AA26AD29686AF854D1B /* LiveServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */; };
+		C7A1999A78AC0854621F0DCE /* Send to xlatch.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = E75EC3B2B9134253BD6BD8DB /* Send to xlatch.shortcut */; };
 		C91E06AFE0270D17318928B7 /* XLatchIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BA50A33C6FC472761359F70 /* XLatchIntents.swift */; };
+		CA64A220983B114FE9BD639E /* Send file to xlatch.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 73FDB87E90060C5E7A8DABE0 /* Send file to xlatch.shortcut */; };
 		D0FCC84082E6BA86BF5B7B78 /* CapturedContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123CCF908036478345E434F3 /* CapturedContext.swift */; };
 		D863A4DDCD8DE65D7F3AB1C0 /* ShortcutSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7642A427F252CBE0EB0CCB5 /* ShortcutSettingsView.swift */; };
 		E413EEE061FE35349B63A97B /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
@@ -53,8 +56,6 @@
 		F368C8D24D321162745E9F1E /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 998A46FC0928DECBD3CBDB9D /* QRScanner.swift */; };
 		F751373C1D48E2DE7B78CD70 /* EnrollmentApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */; };
 		FC5052853D3057BA3839D112 /* CapturedContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123CCF908036478345E434F3 /* CapturedContext.swift */; };
-		ACB8296CA8E74C55A8C7AFDC /* Send to xlatch.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 5F95DEF103D54D05B47A8119 /* Send to xlatch.shortcut */; };
-		31FD3DB61A7E4BFC99E426EE /* Send file to xlatch.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = B50393CAA4124CB5B959259E /* Send file to xlatch.shortcut */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,6 +108,7 @@
 		5A3C70216C28FBB17D9583D1 /* XLatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XLatch.entitlements; sourceTree = "<group>"; };
 		6378269A6E0476B71D4A7084 /* OutboxBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxBackground.swift; sourceTree = "<group>"; };
 		6C44017E1838AD8B660CA6F6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		73FDB87E90060C5E7A8DABE0 /* Send file to xlatch.shortcut */ = {isa = PBXFileReference; path = "Send file to xlatch.shortcut"; sourceTree = "<group>"; };
 		7618D419102F88C16B0941D6 /* XLatchShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = XLatchShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7CB2F33E3B5E54F233E06AD5 /* ProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolTests.swift; sourceTree = "<group>"; };
 		7D2E7410BF2894F1681273D0 /* xlatch Screen Context.shortcut */ = {isa = PBXFileReference; path = "xlatch Screen Context.shortcut"; sourceTree = "<group>"; };
@@ -116,6 +118,7 @@
 		8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveServerTests.swift; sourceTree = "<group>"; };
 		954646361B0F5188FC31F7F2 /* OutboxDelivery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxDelivery.swift; sourceTree = "<group>"; };
 		998A46FC0928DECBD3CBDB9D /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
+		A07AE253CA8A1E384C66516E /* BackupApproversView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupApproversView.swift; sourceTree = "<group>"; };
 		A3C3B97E09EBF0C61057CA8B /* XLatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XLatchApp.swift; sourceTree = "<group>"; };
 		A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApproval.swift; sourceTree = "<group>"; };
 		B4972E9EBB91BE6C98F09288 /* OutboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxTests.swift; sourceTree = "<group>"; };
@@ -128,11 +131,10 @@
 		D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		D92C9D70A7A4C26E97C3151B /* SafariContext.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SafariContext.js; sourceTree = "<group>"; };
 		E493BDC12A16E688518DBE43 /* OutboxItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxItem.swift; sourceTree = "<group>"; };
+		E75EC3B2B9134253BD6BD8DB /* Send to xlatch.shortcut */ = {isa = PBXFileReference; path = "Send to xlatch.shortcut"; sourceTree = "<group>"; };
 		E7642A427F252CBE0EB0CCB5 /* ShortcutSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutSettingsView.swift; sourceTree = "<group>"; };
 		F4C60EE037F5758DB6F33373 /* XLatchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XLatchShare.entitlements; sourceTree = "<group>"; };
 		FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */ = {isa = PBXFileReference; path = "xlatch Screenshot.shortcut"; sourceTree = "<group>"; };
-		5F95DEF103D54D05B47A8119 /* Send to xlatch.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Send to xlatch.shortcut"; sourceTree = "<group>"; };
-		B50393CAA4124CB5B959259E /* Send file to xlatch.shortcut */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Send file to xlatch.shortcut"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -155,6 +157,7 @@
 			isa = PBXGroup;
 			children = (
 				238291A4FB72E6D55381C5DD /* Assets.xcassets */,
+				A07AE253CA8A1E384C66516E /* BackupApproversView.swift */,
 				A531C89DDBA48994A44F19F5 /* CapabilityApproval.swift */,
 				BFCC3582F8C2EEF2C23B508F /* EnrollmentApproval.swift */,
 				54CAFB5D36A2AA95E589C8C7 /* Info.plist */,
@@ -225,9 +228,9 @@
 		FC875C3A7BE5887985833A6F /* Shortcuts */ = {
 			isa = PBXGroup;
 			children = (
+				73FDB87E90060C5E7A8DABE0 /* Send file to xlatch.shortcut */,
+				E75EC3B2B9134253BD6BD8DB /* Send to xlatch.shortcut */,
 				824CF63C0CD8DD94858C01EA /* xlatch Clipboard.shortcut */,
-				B50393CAA4124CB5B959259E /* Send file to xlatch.shortcut */,
-				5F95DEF103D54D05B47A8119 /* Send to xlatch.shortcut */,
 				7D2E7410BF2894F1681273D0 /* xlatch Screen Context.shortcut */,
 				FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */,
 			);
@@ -343,9 +346,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				8C7AAD581FD2AC5454B83505 /* Assets.xcassets in Resources */,
+				CA64A220983B114FE9BD639E /* Send file to xlatch.shortcut in Resources */,
+				C7A1999A78AC0854621F0DCE /* Send to xlatch.shortcut in Resources */,
 				41A1512677F533C37E53ADC5 /* xlatch Clipboard.shortcut in Resources */,
-				31FD3DB61A7E4BFC99E426EE /* Send file to xlatch.shortcut in Resources */,
-				ACB8296CA8E74C55A8C7AFDC /* Send to xlatch.shortcut in Resources */,
 				080E8C4BC7B6C0AF2FE887C4 /* xlatch Screen Context.shortcut in Resources */,
 				4256F1E48E1ABD94980E3741 /* xlatch Screenshot.shortcut in Resources */,
 			);
@@ -399,6 +402,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				45162FFEF51F54070161B42F /* BackupApproversView.swift in Sources */,
 				8FE87093D7FDE27C05A1C7FE /* CapabilityApproval.swift in Sources */,
 				FC5052853D3057BA3839D112 /* CapturedContext.swift in Sources */,
 				448FCE6DA5D3841C1FD57E23 /* Client.swift in Sources */,

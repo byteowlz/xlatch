@@ -173,13 +173,24 @@ pub async fn run(control_dir: std::path::PathBuf, work_dir: std::path::PathBuf) 
         let value = call(&control_dir, ExecutorRequest::Claim).await?;
         let work: Option<Work> = serde_json::from_value(value)?;
         if let Some(work) = work {
-            let outcome = crate::execution::execute(
-                &work_dir,
-                &work.job,
-                &work.manifest,
-                cancellation(&control_dir, &work),
-            )
-            .await;
+            let binding = match &work.manifest.execution {
+                crate::capability::Execution::Command { program, .. } => {
+                    crate::host_trust::command(program)
+                }
+                _ => Ok(()),
+            };
+            let outcome = match binding {
+                Err(error) => Err(error),
+                Ok(()) => {
+                    crate::execution::execute(
+                        &work_dir,
+                        &work.job,
+                        &work.manifest,
+                        cancellation(&control_dir, &work),
+                    )
+                    .await
+                }
+            };
             let (result, error) = match outcome {
                 Ok(value) => (Some(value), None),
                 Err(error) => (None, Some(format!("{error:#}").chars().take(900).collect())),

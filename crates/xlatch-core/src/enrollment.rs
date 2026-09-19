@@ -16,6 +16,11 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnrollmentRequest {
+    /// Manage backup approvers using a separately signed review.
+    Recovery {
+        /// Recovery operation.
+        request: crate::recovery::RecoveryRequest,
+    },
     /// Own enrollment status and server policy; also accessible to pending devices.
     Status,
     /// Establish the first approval key using an operator-issued bootstrap secret.
@@ -75,7 +80,7 @@ pub fn enable_bytes(server: &str, device: &str, token: &str, key: &str) -> Vec<u
     format!("xlatch.enrollment.enable.v1\n{server}\n{device}\n{token}\n{key}").into_bytes()
 }
 
-fn verify(key: &str, signature: &str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn verify(key: &str, signature: &str, bytes: &[u8]) -> Result<()> {
     let key = STANDARD.decode(key)?;
     ensure!(
         key.len() == 65 && key.first() == Some(&4),
@@ -366,6 +371,7 @@ pub fn dispatch(store: &mut Store, owner: &str, request: EnrollmentRequest) -> R
         "enrollment approval requires an authenticated phone"
     );
     match request {
+        EnrollmentRequest::Recovery { request } => crate::recovery::dispatch(store, owner, request),
         EnrollmentRequest::Status => store.enrollment_status(owner),
         EnrollmentRequest::Enable {
             token,

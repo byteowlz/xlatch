@@ -1,6 +1,7 @@
 //! Local operator CLI for `CrossLatch`.
 
 mod destination;
+mod history;
 mod network;
 mod notifications;
 mod pairing;
@@ -39,6 +40,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Configure and export optional server-side routing history (local operator only).
+    History {
+        #[command(subcommand)]
+        command: history::Command,
+    },
     /// Show a QR for explicitly trusting a rotated server certificate on paired phones.
     Identity,
     /// Run the unprivileged executor for a protected service.
@@ -141,6 +147,7 @@ async fn main() -> Result<()> {
     let control_dir = cli.control_dir.unwrap_or_else(|| data_dir.clone());
     let mut wait_for = None;
     let control = match cli.command {
+        Command::History { command } => return history::dispatch(&data_dir, command),
         Command::Identity => return pairing::identity(&control_dir, cli.json).await,
         Command::Executor { work_dir } => {
             return protected::run_executor(control_dir, work_dir).await;
@@ -151,18 +158,8 @@ async fn main() -> Result<()> {
         Command::Service { command, protected } => {
             return service_install::dispatch(data_dir, command, protected).await;
         }
-        Command::Destination {
-            command:
-                destination::Command::Add {
-                    name,
-                    directory,
-                    device,
-                },
-        } => {
-            let capability =
-                destination::add(&control_dir, &name, directory, device.as_deref()).await?;
-            println!("{}", serde_json::to_string_pretty(&capability)?);
-            return Ok(());
+        Command::Destination { command } => {
+            return destination::dispatch(&control_dir, command).await;
         }
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "xlatch", &mut std::io::stdout());
