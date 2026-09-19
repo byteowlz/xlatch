@@ -31,9 +31,10 @@
       }
     },
     {
-      "WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+      "WFWorkflowActionIdentifier": "is.workflow.actions.notification",
       "WFWorkflowActionParameters": {
-        "Text": {
+        "WFNotificationActionTitle": "xlatch",
+        "WFNotificationActionBody": {
           "WFSerializationType": "WFTextTokenString",
           "Value": {
             "string": "\ufffc",
@@ -45,7 +46,8 @@
               }
             }
           }
-        }
+        },
+        "WFNotificationActionSound": false
       }
     }
   ],

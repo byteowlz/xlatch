@@ -268,24 +268,80 @@ struct ComposeView: View {
 
 struct ActivityView: View {
     @EnvironmentObject var model: AppModel
+    @State private var saved: [OutboxItem] = []
+    @State private var error: String?
+    private var rows: [ActivityEntry] {
+        ActivityEntry.merge(jobs: model.jobs, outbox: saved, connection: model.connection)
+    }
     var body: some View {
         NavigationStack {
             List {
-                if model.jobs.isEmpty { ContentUnavailableView("Nothing sent yet", systemImage: "tray", description: Text("Your submitted actions and their results will appear here.")) }
-                ForEach(model.jobs) { job in
-                    NavigationLink { JobView(id: job.id) } label: {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(model.capabilities.first(where: { $0.id == job.capability_id })?.manifest.title ?? job.capability_id).font(.headline)
-                                Text(Date(timeIntervalSince1970: TimeInterval(job.created_at)), style: .relative).font(.caption).foregroundStyle(.secondary)
+                if let error { Text(error).foregroundStyle(.red) }
+                if let error = model.error { Text("Showing saved activity. " + error).foregroundStyle(.secondary) }
+                if rows.isEmpty { ContentUnavailableView("Nothing sent yet", systemImage: "tray", description: Text("Queued shares, accepted jobs and completed results appear here.")) }
+                ForEach(rows) { row in
+                    NavigationLink {
+                        if let id = row.jobID { JobView(id: id) }
+                        else { OutboxView() }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text(row.title).font(.headline)
+                                Spacer()
+                                Text(row.status).font(.caption).foregroundStyle(row.needsAttention ? .orange : .secondary)
                             }
-                            Spacer()
-                            Text(job.statusLabel).font(.subheadline).foregroundStyle(job.status == "failed" ? Color.red : Color.secondary)
+                            if let preview = row.preview { Text(preview).font(.subheadline).lineLimit(2) }
+                            Text(row.server).font(.caption).foregroundStyle(.secondary)
+                            Text(row.created, style: .relative).font(.caption2).foregroundStyle(.secondary)
                         }.padding(.vertical, 4)
                     }
                 }
-            }.navigationTitle("Activity").refreshable { await model.refresh() }
+                Section { NavigationLink("Manage queued shares") { OutboxView() } }
+            }.navigationTitle("Activity")
+                .refreshable { await model.refresh(); reload() }
+                .task {
+                    while !Task.isCancelled {
+                        reload()
+                        do { try await Task.sleep(for: .seconds(1)) } catch { break }
+                    }
+                }
         }
+    }
+    private func reload() {
+        do { saved = try OutboxStore().items(); error = nil }
+        catch { self.error = error.localizedDescription }
+    }
+}
+
+struct ActivityEntry: Identifiable {
+    let id: String
+    let jobID: String?
+    let title: String
+    let status: String
+    let server: String
+    let preview: String?
+    let created: Date
+    let needsAttention: Bool
+
+    static func merge(jobs: [Job], outbox: [OutboxItem], connection: Connection?) -> [ActivityEntry] {
+        let local = outbox.filter { item in
+            guard let connection else { return false }
+            return (try? item.matches(connection)) == true
+        }
+        let receipts = Dictionary(local.compactMap { item in item.jobID.map { ($0, item) } }, uniquingKeysWith: { first, _ in first })
+        let known = Set(jobs.map(\.id))
+        let remote = jobs.map { job in
+            let receipt = receipts[job.id]
+            return ActivityEntry(id: job.id, jobID: job.id, title: receipt?.capability.manifest.title ?? job.capability_id,
+                status: job.status == "succeeded" ? "Completed" : job.statusLabel, server: receipt?.serverURL ?? connection?.url ?? "",
+                preview: receipt?.label, created: Date(timeIntervalSince1970: TimeInterval(job.created_at)), needsAttention: job.status == "failed")
+        }
+        let pending = local.filter { !known.contains($0.jobID ?? "") }.map { item in
+            ActivityEntry(id: "outbox:" + item.id, jobID: item.jobID, title: item.capability.manifest.title,
+                status: item.statusLabel, server: item.serverURL, preview: item.label, created: item.created,
+                needsAttention: [.paused, .expired].contains(item.state))
+        }
+        return (remote + pending).sorted { $0.created == $1.created ? $0.id < $1.id : $0.created > $1.created }
     }
 }
 

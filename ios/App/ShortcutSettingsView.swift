@@ -35,6 +35,17 @@ struct ShortcutSettingsView: View {
             } header: { Text("Quick-send target") } footer: {
                 Text("Shortcuts use this target unless you select another in the action. A changed or removed target stops the shortcut; it never switches to another session.")
             }
+            if let selected = targets.first(where: { $0.id == selection }),
+               let action = model.capabilities.first(where: { capability in
+                   guard let connection = model.connection else { return false }
+                   return XLatchTarget.identifier(connection: connection, capability: capability) == selected.id
+               }) {
+                Section {
+                    NavigationLink("Send a test to \(selected.title)") { ComposeView(capability: action) }
+                } footer: {
+                    Text("Choose sample content, then tap Run action. This performs the real action; use content you are happy to send. The receipt distinguishes server acceptance from offline queuing.")
+                }
+            }
             Section {
                 ShortcutsLink()
                 shortcut("xlatch Clipboard", title: "Add clipboard shortcut")
@@ -50,7 +61,7 @@ struct ShortcutSettingsView: View {
                 Text("These shortcuts appear in the share sheet’s action list below the app icons. Each keeps its own target; changing the quick-send default does not redirect it.").foregroundStyle(.secondary)
                 Text("To change an existing entry’s name, rename it in Shortcuts. If setup did not ask for a target, edit the shortcut’s xlatch action and select Target once. In shortcut Details, Show in Share Sheet controls whether the entry appears. Remove the shortcut to remove its entry.").font(.caption).foregroundStyle(.secondary)
             } header: { Text("Individual share-sheet targets") } footer: {
-                Text("Shared text and links use the text preset; files and images use the file preset. A confirmation shows whether the server accepted the share or it was saved on this iPhone. This does not mean the server action finished.")
+                Text("Shared text and links use the text preset; files and images use the file preset. A notification shows whether the server accepted the share or it was saved on this iPhone. Allow notifications for Shortcuts when iOS asks. This does not mean the server action finished.")
             }
             Section("Back Tap") {
                 Text("After adding a shortcut: Settings → Accessibility → Touch → Back Tap → Double Tap or Triple Tap → choose the shortcut.")

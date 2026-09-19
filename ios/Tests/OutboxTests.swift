@@ -12,6 +12,20 @@ final class OutboxTests: XCTestCase {
         let item = try OutboxItem(input: .text("saved content"), capability: action, connection: connection, now: Date())
         return (directory, store, connection, item)
     }
+    func testActivityJoinsReceiptsAndExcludesOtherPairings() throws {
+        let (_, _, connection, original) = try fixture()
+        var accepted = original
+        accepted.state = .sent
+        accepted.jobID = "accepted-job"
+        let job = Job(id: "accepted-job", capability_id: original.capability.id, status: "succeeded", result: nil, error: nil, created_at: Int64(original.created.timeIntervalSince1970))
+        let rows = ActivityEntry.merge(jobs: [job], outbox: [accepted], connection: connection)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.status, "Completed")
+        XCTAssertEqual(rows.first?.title, "Session")
+        let replacement = Connection(url: connection.url, pin: "different-server", deviceID: connection.deviceID, privateKey: connection.privateKey)
+        XCTAssertTrue(ActivityEntry.merge(jobs: [], outbox: [original], connection: replacement).isEmpty)
+        XCTAssertEqual(ActivityEntry.merge(jobs: [], outbox: [original], connection: connection).first?.id, "outbox:" + original.id)
+    }
     func testRestartPreservesPayloadTargetAndDeduplicationID() throws {
         let (directory, store, connection, item) = try fixture()
         _ = try store.enqueue(item)
