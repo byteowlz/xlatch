@@ -96,6 +96,7 @@ fn proposal(options: &Options, catalog: &[Capability]) -> Result<Manifest> {
     let first = steps.first().context("choose at least two steps")?;
     let last = steps.last().context("choose at least two steps")?;
     let manifest = Manifest {
+        icon: None,
         id: options.id.clone(),
         title: options.title.clone().unwrap_or(plan.title),
         description: format!(

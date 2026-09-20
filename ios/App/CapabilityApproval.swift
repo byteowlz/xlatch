@@ -92,7 +92,7 @@ struct CapabilityApprovalListView: View {
             CapabilityApprovalSelectionView(capability: capability, devices: devices)
         } label: {
             VStack(alignment: .leading) {
-                Text(capability.manifest.title)
+                HStack { CapabilityIcon(icon: capability.manifest.icon); Text(capability.manifest.title) }
                 Text("\(capability.id) · \(capability.status)").font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -120,7 +120,7 @@ struct CapabilityApprovalSelectionView: View {
     var body: some View {
         Form {
             Section {
-                Text(capability.manifest.title)
+                HStack { CapabilityIcon(icon: capability.manifest.icon); Text(capability.manifest.title) }
                 Text(capability.manifest.description)
                 Text(capability.revision).font(.caption.monospaced()).textSelection(.enabled)
             }

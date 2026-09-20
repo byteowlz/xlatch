@@ -1,6 +1,10 @@
 package com.byteowlz.xlatch
 
 import android.Manifest
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.Alignment
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
@@ -242,10 +246,10 @@ private fun AppScreen(model: AppModel, activity: MainActivity) {
                         items(visible) { action ->
                             val manifest = action.getJSONObject("manifest")
                             Column {
-                                Text(
-                                    manifest.getString("title"),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    ActionIcon(manifest)
+                                    Text(manifest.getString("title"), style = MaterialTheme.typography.titleMedium)
+                                }
                                 Text(
                                     manifest.getString("description"),
                                     style = MaterialTheme.typography.bodyMedium,
@@ -621,4 +625,23 @@ private fun CodeDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+
+@Composable
+private fun ActionIcon(manifest: JSONObject) {
+    val encoded = manifest.optJSONObject("icon")?.optString("png_base64")
+    val bitmap = remember(encoded) {
+        runCatching {
+            require(encoded != null && encoded.length <= 175000)
+            val bytes = Base64.decode(encoded, Base64.DEFAULT)
+            require(bytes.size <= 131072)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            require(bounds.outWidth in 1..256 && bounds.outHeight in 1..256)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }.getOrNull()
+    }
+    if (bitmap != null) Image(bitmap, contentDescription = null, modifier = Modifier.size(32.dp))
+    else Icon(Icons.Outlined.Bolt, contentDescription = null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
 }

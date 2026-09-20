@@ -75,7 +75,12 @@ enum Command {
         command: destination::Command,
     },
     /// Submit a manifest for approval.
-    Register { manifest: PathBuf },
+    Register {
+        manifest: PathBuf,
+        /// Embed a PNG or self-contained SVG as a portable action icon.
+        #[arg(long)]
+        icon: Option<PathBuf>,
+    },
     /// Approve exactly the revision printed by register/list.
     Approve {
         id: String,
@@ -169,9 +174,13 @@ async fn main() -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "xlatch", &mut std::io::stdout());
             return Ok(());
         }
-        Command::Register { manifest } => Control::Register {
-            manifest: serde_json::from_slice::<Manifest>(&std::fs::read(manifest)?)?,
-        },
+        Command::Register { manifest, icon } => {
+            let mut manifest: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
+            if let Some(path) = icon {
+                manifest.icon = Some(xlatch_core::icon::Icon::from_file(&path)?);
+            }
+            Control::Register { manifest }
+        }
         Command::Approve {
             id,
             revision,

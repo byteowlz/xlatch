@@ -13,6 +13,8 @@ description = "Capability contracts, authorization, persistence, and execution f
 workspace = true
 
 [dependencies]
+image.workspace = true
+resvg.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

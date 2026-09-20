@@ -193,7 +193,7 @@ struct ActionsView: View {
                         ForEach(model.enabledCapabilities) { capability in
                             NavigationLink { ComposeView(capability: capability) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(capability.manifest.title).font(.headline)
+                                    HStack { CapabilityIcon(icon: capability.manifest.icon); Text(capability.manifest.title).font(.headline) }
                                     Text(capability.manifest.description).font(.subheadline).foregroundStyle(.secondary)
                                     Text(capability.contentLabel).font(.caption).foregroundStyle(.secondary)
                                 }.padding(.vertical, 6)

@@ -57,3 +57,4 @@ pub mod recovery;
 pub mod chain;
 pub mod composition;
 mod composition_store;
+pub mod icon;

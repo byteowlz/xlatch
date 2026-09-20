@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import ImageIO
 import UniformTypeIdentifiers
 
 struct Capability: Codable, Identifiable, Hashable {
@@ -31,6 +33,7 @@ struct Manifest: Codable, Hashable {
     let title: String
     let description: String
     let accepts: [String]
+    var icon: ActionIcon? = nil
     var execution: ExecutionKind? = nil
     struct ExecutionKind: Codable, Hashable { let kind: String }
 }
@@ -189,5 +192,30 @@ extension ClientError {
         guard value.domain == NSURLErrorDomain else { return false }
         return [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .dnsLookupFailed,
                 .notConnectedToInternet, .internationalRoamingOff, .dataNotAllowed, .cancelled].contains(URLError.Code(rawValue: value.code))
+    }
+}
+
+
+struct ActionIcon: Codable, Hashable {
+    let png_base64: String
+    var image: UIImage? {
+        guard png_base64.count <= 175000, let data = Data(base64Encoded: png_base64), data.count <= 131072,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...256).contains(width), (1...256).contains(height) else { return nil }
+        return UIImage(data: data)
+    }
+}
+
+struct CapabilityIcon: View {
+    let icon: ActionIcon?
+    var size: CGFloat = 32
+    var body: some View {
+        Group {
+            if let image = icon?.image { Image(uiImage: image).resizable().scaledToFit() }
+            else { Image(systemName: "bolt.fill").foregroundStyle(.tint) }
+        }.frame(width: size, height: size).accessibilityHidden(true)
     }
 }

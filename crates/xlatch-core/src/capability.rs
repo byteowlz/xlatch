@@ -18,6 +18,9 @@ pub struct Manifest {
     pub title: String,
     /// What this action does and its side effects.
     pub description: String,
+    /// Optional embedded native-client icon; absent values preserve legacy revisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<crate::icon::Icon>,
     /// MIME types the share client can submit.
     pub accepts: Vec<String>,
     /// JSON Schema for invocation input.
@@ -77,6 +80,9 @@ impl Manifest {
             "title must contain 1–120 bytes"
         );
         ensure!(self.description.len() <= 4000, "description too long");
+        if let Some(icon) = &self.icon {
+            icon.png_bytes()?;
+        }
         ensure!(
             !self.accepts.is_empty() && self.accepts.len() <= 16,
             "declare 1–16 MIME types"

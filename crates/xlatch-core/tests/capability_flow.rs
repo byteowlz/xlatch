@@ -36,6 +36,7 @@ impl Drop for Fixture {
 
 fn manifest() -> Manifest {
     Manifest {
+        icon: None,
         id: "echo".into(),
         title: "Echo".into(),
         description: "Return shared text".into(),
@@ -1551,5 +1552,65 @@ fn one_off_chain_stops_after_grant_revocation() -> Result<()> {
     assert!(claim_step(&mut store)?.is_none());
     assert_eq!(store.job(&owner, &parent.id)?.status, "failed");
     assert_eq!(store.composition_steps(&owner, &parent.id)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn icons_preserve_legacy_revisions_and_reject_active_svg_content() -> Result<()> {
+    use xlatch_core::icon::Icon;
+    let legacy = r#"{"id":"echo","title":"Echo","description":"Return shared text","accepts":["text/plain"],"input_schema":{"additionalProperties":false,"properties":{"text":{"type":"string"}},"required":["text"],"type":"object"},"output_schema":{"type":"object"},"execution":{"kind":"echo"},"timeout_seconds":5}"#;
+    let mut action: Manifest = serde_json::from_str(legacy)?;
+    assert_eq!(serde_json::to_string(&action)?, legacy);
+    let fixture = Fixture::new()?;
+    let path = fixture.0.join("icon.svg");
+    std::fs::write(
+        &path,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#008877" d="M2 2h20v20H2z"/></svg>"##,
+    )?;
+    let icon = Icon::from_file(&path)?;
+    let png = icon.png_bytes()?;
+    assert!(png.starts_with(b"\x89PNG"));
+    assert_eq!(
+        image::load_from_memory(&png)?
+            .to_rgba8()
+            .get_pixel(64, 64)
+            .0,
+        [0, 136, 119, 255]
+    );
+    let mut too_large = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(257, 1).write_to(&mut too_large, image::ImageFormat::Png)?;
+    assert!(
+        Icon {
+            png_base64: STANDARD.encode(too_large.into_inner())
+        }
+        .png_bytes()
+        .is_err()
+    );
+    action.icon = Some(icon);
+    action.validate()?;
+    assert_ne!(action.revision()?, manifest().revision()?);
+    for unsafe_svg in [
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><image href="file:///etc/passwd"/></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#,
+        r#"<svg xmlns="http://www.w3.org/2000/svg"><rect onclick="alert(1)"/></svg>"#,
+        r##"<svg xmlns="http://www.w3.org/2000/svg"><use href="#loop" id="loop"/></svg>"##,
+    ] {
+        std::fs::write(&path, unsafe_svg)?;
+        assert!(Icon::from_file(&path).is_err());
+    }
+    assert!(
+        Icon {
+            png_base64: "not png".into()
+        }
+        .png_bytes()
+        .is_err()
+    );
+    assert!(
+        Icon {
+            png_base64: "A".repeat(175_001)
+        }
+        .png_bytes()
+        .is_err()
+    );
     Ok(())
 }

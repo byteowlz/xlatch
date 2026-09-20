@@ -188,7 +188,7 @@ struct ShareView: View {
     private var chainSection: some View {
         Section {
             ForEach(Array(model.chain.enumerated()), id: \.offset) { index, step in
-                Label("\(index + 1). \(step.manifest.title)", systemImage: "arrow.down")
+                HStack { CapabilityIcon(icon: step.manifest.icon, size: 24); Text("\(index + 1). \(step.manifest.title)") }
             }
             HStack {
                 Button("Undo") { Task { await model.undoStep() } }.buttonStyle(.borderless)
@@ -228,6 +228,7 @@ private struct ShareTargetRow: View {
         HStack {
             Button { Task { await model.send(capability) } } label: {
                 HStack {
+                    CapabilityIcon(icon: capability.manifest.icon)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(capability.manifest.title).font(.headline)
                         Text(capability.manifest.description).font(.subheadline).foregroundStyle(.secondary)

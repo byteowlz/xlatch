@@ -432,9 +432,14 @@ impl Desktop {
                                             } else {
                                                 theme.background
                                             })
-                                            .child(SharedString::from(
-                                                capability.manifest.title.clone(),
-                                            ))
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(action_icon(&capability))
+                                                    .child(SharedString::from(
+                                                        capability.manifest.title.clone(),
+                                                    )),
+                                            )
                                             .child(
                                                 div()
                                                     .text_xs()
@@ -688,5 +693,24 @@ impl Render for Desktop {
                         )
                     }),
             )
+    }
+}
+
+fn action_icon(capability: &Capability) -> gpui_kit::AnyElement {
+    if let Some(bytes) = capability
+        .manifest
+        .icon
+        .as_ref()
+        .and_then(|icon| icon.png_bytes().ok())
+    {
+        gpui_kit::img(std::sync::Arc::new(gpui_kit::Image::from_bytes(
+            gpui_kit::ImageFormat::Png,
+            bytes,
+        )))
+        .w(px(28.))
+        .h(px(28.))
+        .into_any_element()
+    } else {
+        div().w(px(28.)).h(px(28.)).child("◇").into_any_element()
     }
 }

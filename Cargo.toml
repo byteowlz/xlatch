@@ -19,6 +19,7 @@ keywords = ["cli", "automation", "capabilities"]
 categories = ["command-line-utilities"]
 
 [workspace.dependencies]
+resvg = { version = "=0.46.0", default-features = false }
 tempfile = "3"
 gpui-kit = "=0.6.1"
 tray-icon = "0.24"

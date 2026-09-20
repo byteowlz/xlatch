@@ -86,6 +86,7 @@ impl Store {
         let first = steps.first().context("missing first step")?;
         let last = steps.last().context("missing last step")?;
         let manifest = Manifest {
+            icon: None,
             id,
             title,
             description: "Run the selected action revisions in order".into(),
