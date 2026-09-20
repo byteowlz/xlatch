@@ -12,6 +12,20 @@ final class OutboxTests: XCTestCase {
         let item = try OutboxItem(input: .text("saved content"), capability: action, connection: connection, now: Date())
         return (directory, store, connection, item)
     }
+    func testChainSurvivesRestartAndCannotChangeOnRetry() throws {
+        let (directory, store, connection, item) = try fixture()
+        let other = Capability(manifest: Manifest(id: "second", title: "Second", description: "", accepts: ["text/plain"]), revision: "pinned", status: "active")
+        let chain = [item.capability, other]
+        let queued = try OutboxItem(id: item.id, input: item.input(), capability: item.capability, connection: connection, now: item.created, chain: chain)
+        _ = try store.enqueue(queued)
+        let loaded = try XCTUnwrap(OutboxStore(directory: directory).items().first)
+        XCTAssertEqual(loaded.chain, chain)
+        XCTAssertEqual(loaded.id, item.id)
+        XCTAssertThrowsError(try store.enqueue(item))
+        var changed = queued
+        changed.chain = [item.capability, item.capability]
+        XCTAssertThrowsError(try store.enqueue(changed))
+    }
     func testActivityJoinsReceiptsAndExcludesOtherPairings() throws {
         let (_, _, connection, original) = try fixture()
         var accepted = original

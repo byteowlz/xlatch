@@ -332,12 +332,12 @@ struct ActivityEntry: Identifiable {
         let known = Set(jobs.map(\.id))
         let remote = jobs.map { job in
             let receipt = receipts[job.id]
-            return ActivityEntry(id: job.id, jobID: job.id, title: receipt?.capability.manifest.title ?? job.capability_id,
+            return ActivityEntry(id: job.id, jobID: job.id, title: receipt?.targetTitle ?? job.capability_id,
                 status: job.status == "succeeded" ? "Completed" : job.statusLabel, server: receipt?.serverURL ?? connection?.url ?? "",
                 preview: receipt?.label, created: Date(timeIntervalSince1970: TimeInterval(job.created_at)), needsAttention: job.status == "failed")
         }
         let pending = local.filter { !known.contains($0.jobID ?? "") }.map { item in
-            ActivityEntry(id: "outbox:" + item.id, jobID: item.jobID, title: item.capability.manifest.title,
+            ActivityEntry(id: "outbox:" + item.id, jobID: item.jobID, title: item.targetTitle,
                 status: item.statusLabel, server: item.serverURL, preview: item.label, created: item.created,
                 needsAttention: [.paused, .expired].contains(item.state))
         }

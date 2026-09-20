@@ -32,6 +32,9 @@ pub fn dependencies(conn: &Connection, manifest: &Manifest) -> Result<()> {
 impl Store {
     /// Check direct permission or delegation from a currently authorized composition parent.
     pub(crate) fn authorize_job(&self, job: &Job) -> Result<()> {
+        if self.is_transient_chain(&job.id)? {
+            return self.authorize_transient_chain(job);
+        }
         let current = self.capability(&job.capability_id)?;
         ensure!(
             current.status == "active" && current.revision == job.revision,
@@ -47,16 +50,12 @@ impl Store {
             .optional()?;
         if let Some(id) = parent {
             let parent = self.job("local", &id)?;
-            let cap = self.capability(&parent.capability_id)?;
+            self.authorize_job(&parent)?;
             ensure!(
-                parent.owner == job.owner
-                    && parent.status == "running"
-                    && cap.status == "active"
-                    && cap.revision == parent.revision
-                    && self.has_grant(&parent.owner, &parent.capability_id, &parent.revision)?,
+                parent.owner == job.owner && parent.status == "running",
                 "composition approval, grant or state changed"
             );
-            dependencies(&self.conn, &cap.manifest)?;
+            dependencies(&self.conn, &self.composition_manifest(&parent)?)?;
         } else {
             ensure!(
                 self.has_grant(&job.owner, &job.capability_id, &job.revision)?,
@@ -90,9 +89,9 @@ impl Store {
     }
     fn advance_composition(&self, parent: &Job) -> Result<()> {
         self.authorize_job(parent)?;
-        let cap = self.capability(&parent.capability_id)?;
-        dependencies(&self.conn, &cap.manifest)?;
-        let Execution::Compose { steps } = &cap.manifest.execution else {
+        let manifest = self.composition_manifest(parent)?;
+        dependencies(&self.conn, &manifest)?;
+        let Execution::Compose { steps } = &manifest.execution else {
             anyhow::bail!("expected composition");
         };
         let last: Option<(u32,String)> = self.conn.query_row("SELECT position,child_id FROM composition_steps WHERE parent_id=?1 ORDER BY position DESC LIMIT 1",[&parent.id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
@@ -113,7 +112,7 @@ impl Store {
                     self.enqueue_step(parent, position + 1, step, result)
                 } else {
                     ensure!(
-                        jsonschema::validator_for(&cap.manifest.output_schema)?.is_valid(result),
+                        jsonschema::validator_for(&manifest.output_schema)?.is_valid(result),
                         "composition result violates output schema"
                     );
                     self.end_composition(parent, "succeeded", Some(result), None)

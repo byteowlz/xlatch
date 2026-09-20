@@ -9,6 +9,7 @@ struct OutboxItem: Codable, Identifiable {
     let deviceKey: Data
     let serverURL: String
     let capability: Capability
+    var chain: [Capability]? = nil
     let mime: String
     var label: String
     let payloadHash: Data
@@ -24,7 +25,9 @@ struct OutboxItem: Codable, Identifiable {
     var jobID: String?
     var detail: String?
 
-    init(id: String = UUID().uuidString, input: ShareInput, capability: Capability, connection: Connection, now: Date) throws {
+    init(id: String = UUID().uuidString, input: ShareInput, capability: Capability, connection: Connection, now: Date, chain: [Capability]? = nil) throws {
+        self.chain = chain
+        if let chain { guard (2...16).contains(chain.count), chain.first == capability else { throw ClientError.message("Choose 2–16 chain steps.") } }
         self.id = id; deviceID = connection.deviceID; serverPin = connection.pin
         deviceKey = try Curve25519.Signing.PrivateKey(rawRepresentation: connection.privateKey).publicKey.rawRepresentation
         serverURL = connection.url; self.capability = capability; mime = input.mime
@@ -53,6 +56,7 @@ struct OutboxItem: Codable, Identifiable {
         case .expired: return "Expired"
         }
     }
+    var targetTitle: String { chain?.map { $0.manifest.title }.joined(separator: " → ") ?? capability.manifest.title }
     var receipt: String { jobID ?? "outbox:\(id)" }
     var confirmation: String {
         switch state {

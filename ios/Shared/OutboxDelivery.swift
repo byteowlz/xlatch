@@ -15,9 +15,9 @@ actor OutboxDelivery {
          schedule: @escaping () -> Void = OutboxBackground.schedule) {
         makeStore = store; self.connection = connection; self.deliver = deliver; self.schedule = schedule
     }
-    func submit(_ input: ShareInput, capability: Capability, connection: Connection, id: String = UUID().uuidString) async throws -> OutboxItem {
+    func submit(_ input: ShareInput, capability: Capability, connection: Connection, id: String = UUID().uuidString, chain: [Capability]? = nil) async throws -> OutboxItem {
         let store = try makeStore()
-        let item = try store.enqueue(OutboxItem(id: id, input: input, capability: capability, connection: connection, now: Date()))
+        let item = try store.enqueue(OutboxItem(id: id, input: input, capability: capability, connection: connection, now: Date(), chain: chain))
         schedule()
         await drain(id: item.id)
         return try store.items().first(where: { $0.id == item.id }) ?? item
@@ -34,7 +34,7 @@ actor OutboxDelivery {
                 guard !Task.isCancelled, let item = try store.claim(id: id) else { break }
                 do {
                     guard let current = try connection(), try item.matches(current) else { throw ClientError.message("Pairing changed or was removed. This share will not be sent to another server or device.") }
-                    guard !ShareActionPreferences.disabled(deviceID: current.deviceID).contains(item.capability.id) else { throw ClientError.message("This action is disabled on this phone. Enable it before retrying.") }
+                    guard !(item.chain ?? [item.capability]).contains(where: { ShareActionPreferences.disabled(deviceID: current.deviceID).contains($0.id) }) else { throw ClientError.message("This action is disabled on this phone. Enable it before retrying.") }
                     try Task.checkCancellation()
                     guard try store.owns(item) else { continue }
                     let job = try await deliver(item, current)
@@ -50,11 +50,14 @@ actor OutboxDelivery {
     static func invoke(_ item: OutboxItem, connection: Connection) async throws -> Job {
         let client = try APIClient(connection: connection)
         let current = try await client.capabilities()
-        guard current.contains(where: { $0.id == item.capability.id && $0.revision == item.capability.revision && $0.status == "active" }) else {
+        guard (item.chain ?? [item.capability]).allSatisfy({ step in current.contains(where: { $0.id == step.id && $0.revision == step.revision && $0.status == "active" }) }) else {
             throw ClientError.message("The target was removed, changed, or is no longer granted. Review this share; it will not switch targets automatically.")
         }
         try Task.checkCancellation()
         let progress = UploadReporter(item: item, store: try OutboxStore())
+        if let chain = item.chain {
+            return try await client.rpc(["op": "invoke_chain", "steps": chain.map { ["capability_id": $0.id, "revision": $0.revision] }, "input": try item.input().payload, "idempotency_key": item.id], progress: progress.update)
+        }
         return try await client.invoke(item.capability, input: item.input(), key: item.id, progress: progress.update)
     }
 }

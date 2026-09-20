@@ -1453,3 +1453,103 @@ fn composition_enforces_final_receipt_and_never_replays_uncertain_step() -> Resu
     assert_eq!(store.job("local", &running.job.id)?.status, "failed");
     Ok(())
 }
+
+#[test]
+fn one_off_chain_requires_each_grant_and_never_activates_targets() -> Result<()> {
+    use xlatch_core::{chain::Reference, composition::Binding};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    composed_fixture(&mut store, Binding::Previous)?;
+    let (owner, _) = pair(&mut store, 115)?;
+    let second = store.capability("second")?;
+    let refs = vec![
+        Reference {
+            capability_id: "echo".into(),
+            revision: store.capability("echo")?.revision,
+        },
+        Reference {
+            capability_id: "second".into(),
+            revision: second.revision.clone(),
+        },
+    ];
+    let input = json!({"text":"chain"});
+    assert!(store.invoke_chain(&owner, &refs, &input, "chain").is_err());
+    store.grant(&owner, "second", &second.revision)?;
+    let before = store.discover("local")?;
+    assert!(
+        store
+            .chain_candidates(&owner, &refs[..1])?
+            .iter()
+            .any(|c| c.manifest.id == "second")
+    );
+    let parent = store.invoke_chain(&owner, &refs, &input, "chain")?;
+    assert_eq!(
+        store.invoke_chain(&owner, &refs, &input, "chain")?.id,
+        parent.id
+    );
+    assert!(
+        store
+            .invoke_chain(&owner, &refs, &json!({"text":"changed"}), "chain")
+            .is_err()
+    );
+    assert_eq!(
+        serde_json::to_value(store.discover("local")?)?,
+        serde_json::to_value(before)?
+    );
+    let first = claim_step(&mut store)?.context("first")?;
+    complete_step(&mut store, &first, input.clone())?;
+    drop(store);
+    let mut store = fixture.store()?;
+    store.recover()?;
+    let second_job = claim_step(&mut store)?.context("second")?;
+    complete_step(&mut store, &second_job, input.clone())?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job(&owner, &parent.id)?.result, Some(input));
+    let saved = store.save_chain(&owner, &refs, "Saved chain")?;
+    assert_eq!(saved.status, "pending");
+    assert!(
+        store
+            .invoke(
+                &owner,
+                &saved.manifest.id,
+                &saved.revision,
+                &json!({"text":"x"}),
+                "saved"
+            )
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn one_off_chain_stops_after_grant_revocation() -> Result<()> {
+    use xlatch_core::{chain::Reference, composition::Binding};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    composed_fixture(&mut store, Binding::Previous)?;
+    let (owner, _) = pair(&mut store, 116)?;
+    let second = store.capability("second")?;
+    store.grant(&owner, "second", &second.revision)?;
+    let refs = vec![
+        Reference {
+            capability_id: "echo".into(),
+            revision: store.capability("echo")?.revision,
+        },
+        Reference {
+            capability_id: "second".into(),
+            revision: second.revision,
+        },
+    ];
+    let parent = store.invoke_chain(&owner, &refs, &json!({"text":"x"}), "revoked")?;
+    let first = claim_step(&mut store)?.context("first")?;
+    complete_step(&mut store, &first, json!({"text":"x"}))?;
+    let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    conn.execute(
+        "DELETE FROM grants WHERE device_id=?1 AND capability_id='second'",
+        [&owner],
+    )?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job(&owner, &parent.id)?.status, "failed");
+    assert_eq!(store.composition_steps(&owner, &parent.id)?.len(), 1);
+    Ok(())
+}

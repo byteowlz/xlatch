@@ -39,3 +39,9 @@ Pass this file with `xlatch compose audio.to-pi --spec plan.json`. TOML plans wo
 Default input is the previous result (the original input for step one). An explicit mapping uses `input: {"kind":"fields","fields":{"text":{"kind":"previous","pointer":"/text"},"file":{"kind":"original","pointer":"/file"},"mime_type":{"kind":"literal","value":"text/plain"}}}`. JSON pointers select exact values without coercion. Missing fields or schema violations fail before the next step starts.
 
 The supplied transcription adapter accepts up to 4 MiB of audio. A chain has 2–16 leaf steps and at most one hour of total declared timeout. Job details include each step and its receipt. Failed or interrupted steps are never automatically replayed; inspect their results before starting a new invocation.
+
+## Build a chain while sharing on iPhone
+
+Tap a target to send normally. Swipe left fully on a leaf action, or choose **Add step** from its menu, to make it the first step. Only server-verified compatible, granted next actions remain. Tap one to send through the chain, or swipe it to keep extending. **Undo** and **Clear** change the selection without sending anything. **Save as target** submits a reusable chain for approval after at least two steps are selected.
+
+The phone stores the exact sequence and revisions in its outbox before upload. Retries cannot replace recipients or bypass changed permissions. Compatibility discovery requires a reachable server; a fully selected chain can still be retained by the outbox if delivery then loses connectivity. Activity shows the chain name and the server job exposes individual step receipts. Nested compositions are not offered as steps. A chain can contain at most 16 leaf actions.

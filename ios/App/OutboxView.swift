@@ -31,7 +31,7 @@ struct OutboxView: View {
                         Button("Delete", role: .destructive) { pendingDelete = item }
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(item.capability.manifest.title)
+                            Text(item.targetTitle)
                             Text(item.statusLabel).font(.caption).foregroundStyle(item.state == .paused ? .orange : .secondary)
                             if item.state == .sending, let upload = item.upload {
                                 UploadProgressBar(progress: upload)

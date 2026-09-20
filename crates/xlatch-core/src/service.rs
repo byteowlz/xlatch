@@ -16,6 +16,17 @@ pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Valu
     match request {
         Request::Approval { request } => crate::approval::dispatch(store, owner, request),
         Request::Enrollment { request } => crate::enrollment::dispatch(store, owner, request),
+        Request::ChainCandidates { steps } => Ok(serde_json::to_value(
+            store.chain_candidates(owner, &steps)?,
+        )?),
+        Request::InvokeChain {
+            steps,
+            input,
+            idempotency_key,
+        } => job_response(store.invoke_chain(owner, &steps, &input, &idempotency_key)?),
+        Request::SaveChain { steps, title } => Ok(serde_json::to_value(
+            store.save_chain(owner, &steps, &title)?,
+        )?),
         Request::Discover => Ok(serde_json::to_value(store.discover(owner)?)?),
         Request::Invoke {
             capability_id,

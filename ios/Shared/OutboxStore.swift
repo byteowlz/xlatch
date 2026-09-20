@@ -100,7 +100,7 @@ final class OutboxStore {
             let existing = try records(db)
             if let same = existing.first(where: { $0.id == item.id }) {
                 guard same.deviceID == item.deviceID, same.serverPin == item.serverPin, same.deviceKey == item.deviceKey,
-                      same.capability == item.capability, same.payloadHash == item.payloadHash else { throw ClientError.message("This retry ID belongs to different content. Open Outbox to inspect the earlier attempt.") }
+                      same.capability == item.capability, same.chain == item.chain, same.payloadHash == item.payloadHash else { throw ClientError.message("This retry ID belongs to different content. Open Outbox to inspect the earlier attempt.") }
                 return same
             }
             let pending = existing.filter { $0.payload != nil }

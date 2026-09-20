@@ -270,6 +270,27 @@ pub enum Request {
     },
     /// List visible active capabilities (all revisions for the local operator).
     Discover,
+    /// Return authorized leaf actions compatible with the selected chain.
+    ChainCandidates {
+        /// Ordered exact revisions already selected.
+        steps: Vec<crate::chain::Reference>,
+    },
+    /// Run a one-off chain using direct grants for every leaf.
+    InvokeChain {
+        /// Ordered exact leaf revisions.
+        steps: Vec<crate::chain::Reference>,
+        /// Original share content.
+        input: Value,
+        /// Stable retry identity.
+        idempotency_key: String,
+    },
+    /// Submit a reusable composition for normal approval; never activates it.
+    SaveChain {
+        /// Ordered exact leaf revisions.
+        steps: Vec<crate::chain::Reference>,
+        /// Display name for the proposed target.
+        title: String,
+    },
     /// Enqueue a typed invocation; repeated keys return the same job.
     Invoke {
         /// Capability id.

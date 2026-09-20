@@ -31,6 +31,8 @@ struct Manifest: Codable, Hashable {
     let title: String
     let description: String
     let accepts: [String]
+    var execution: ExecutionKind? = nil
+    struct ExecutionKind: Codable, Hashable { let kind: String }
 }
 
 struct Job: Codable, Identifiable {
