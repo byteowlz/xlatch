@@ -1628,7 +1628,9 @@ async fn large_upload_resumes_and_saves_without_changing_legacy_manifest() -> Re
     action.execution = Execution::SaveFile {
         directory: destination.to_string_lossy().into(),
     };
-    action.input_schema = json!({"type":"object","required":["file"],"properties":{"file":{"type":"object","required":["name","mime_type","data_base64"],"properties":{"name":{"type":"string"},"mime_type":{"type":"string"},"data_base64":{"type":"string"}},"additionalProperties":false}},"additionalProperties":false});
+    let legacy: Manifest =
+        serde_json::from_str(include_str!("../../../examples/capabilities/echo.json"))?;
+    action.input_schema = legacy.input_schema;
     let cap = store.register(&action)?;
     store.approve("echo", &cap.revision, true)?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -1658,7 +1660,24 @@ async fn large_upload_resumes_and_saves_without_changing_legacy_manifest() -> Re
             result["offset"]
         );
     }
-    let input = json!({"file":{"artifact_id":id,"name":"recording.wav","mime_type":"audio/wav","size":bytes.len()}});
+    let input = json!({"mime_type":"audio/wav","file":{"artifact_id":id,"name":"recording.wav","mime_type":"audio/wav","size":bytes.len()}});
+    let mut constrained = action.clone();
+    constrained.id = "limited-save".into();
+    constrained.input_schema["properties"]["file"]["properties"]["data_base64"]["maxLength"] =
+        json!(4);
+    let limited = store.register(&constrained)?;
+    store.approve("limited-save", &limited.revision, true)?;
+    assert!(
+        store
+            .invoke(
+                "local",
+                "limited-save",
+                &limited.revision,
+                &input,
+                "cannot-bypass-size"
+            )
+            .is_err()
+    );
     let job = store.invoke("local", "echo", &cap.revision, &input, "large-file")?;
     assert_eq!(
         store

@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import OSLog
 
 /// Each mutation uses a SQLite transaction: the app and share extension are separate processes.
 final class OutboxStore {
@@ -26,10 +27,16 @@ final class OutboxStore {
         sqlite3_busy_timeout(database, 5000)
         try execute(database, "PRAGMA secure_delete=ON")
         try execute(database, "CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, record BLOB NOT NULL)")
+        try execute(database, "CREATE TABLE IF NOT EXISTS garbage_files (name TEXT PRIMARY KEY)")
         try execute(database, "BEGIN IMMEDIATE")
         do {
             let result = try body(database)
             try execute(database, "COMMIT")
+            do {
+                try execute(database, "BEGIN IMMEDIATE")
+                try cleanupFiles(database)
+                try execute(database, "COMMIT")
+            } catch { sqlite3_exec(database, "ROLLBACK", nil, nil, nil); Logger(subsystem: "com.byteowlz.xlatch", category: "outbox").error("File cleanup will retry: \(error.localizedDescription)") }
             return result
         } catch {
             sqlite3_exec(database, "ROLLBACK", nil, nil, nil)
@@ -68,7 +75,30 @@ final class OutboxStore {
         }
         guard status == SQLITE_DONE else { throw ClientError.message("Could not save Outbox state. Check available storage.") }
     }
+    private func removeFile(_ item: OutboxItem, _ db: OpaquePointer) throws {
+        guard let name = item.localFile, UUID(uuidString: name) != nil else { return }
+        try execute(db, "INSERT OR IGNORE INTO garbage_files VALUES('\(name)')")
+    }
+    private func cleanupFiles(_ db: OpaquePointer) throws {
+        let active = Set(try records(db).filter { $0.payload != nil }.compactMap(\.localFile))
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT name FROM garbage_files", -1, &statement, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let text = sqlite3_column_text(statement, 0) else { continue }
+            let name = String(cString: text)
+            guard !active.contains(name) else { continue }
+            let file = try SharedFiles.resolve(name)
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            try execute(db, "DELETE FROM garbage_files WHERE name='\(name)'")
+        }
+        // Interrupted/cancelled provider staging can leave an unreferenced source copy.
+        for file in try FileManager.default.contentsOfDirectory(at: SharedFiles.directory(), includingPropertiesForKeys: [.contentModificationDateKey]) where !active.contains(file.lastPathComponent) {
+            if let date = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, date < Date().addingTimeInterval(-86400) { try FileManager.default.removeItem(at: file) }
+        }
+    }
     private func remove(_ id: String, _ db: OpaquePointer) throws {
+        if let item = try records(db).first(where: { $0.id == id }) { try removeFile(item, db) }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, "DELETE FROM items WHERE id=?1", -1, &statement, nil) == SQLITE_OK else { throw ClientError.message("Could not prepare Outbox deletion.") }
         defer { sqlite3_finalize(statement) }
@@ -84,6 +114,8 @@ final class OutboxStore {
             if now.timeIntervalSince(item.expires) >= 86400 || item.state == .sent || item.state == .cancelled {
                 try remove(item.id, db)
             } else if item.state != .expired {
+                try removeFile(item, db)
+                item.localFile = nil
                 item.state = .expired; item.payload = nil; item.label = "Expired share"
                 item.lease = nil; item.leaseUntil = nil
                 item.detail = "Delivery expired after seven days. Content was removed. A previous attempt may have reached the server."
@@ -109,7 +141,18 @@ final class OutboxStore {
             for old in existing.filter({ [.sent, .cancelled, .expired].contains($0.state) }).dropLast(99) {
                 try remove(old.id, db)
             }
-            try save(item, db); return item
+            var owned = item
+            if let sourceName = item.localFile {
+                let source = try SharedFiles.resolve(sourceName)
+                let target = try SharedFiles.resolve(item.id)
+                if source != target {
+                    if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+                    try FileManager.default.copyItem(at: source, to: target)
+                    try SharedFiles.protect(target)
+                }
+                owned.localFile = item.id
+            }
+            try save(owned, db); return owned
         }
     }
     func claim(id: String? = nil, now: Date = Date()) throws -> OutboxItem? {
@@ -140,6 +183,7 @@ final class OutboxStore {
             guard current.state == .sending, current.lease == item.lease else { return }
             guard progress.sent >= (current.upload?.sent ?? 0) else { return }
             current.upload = progress
+            current.leaseUntil = Date().addingTimeInterval(180)
             try save(current, db)
         }
     }
@@ -151,7 +195,7 @@ final class OutboxStore {
             guard var saved = try records(db).first(where: { $0.id == item.id && $0.lease == item.lease && $0.state == .sending }) else { return }
             saved.upload = nil
             saved.lease = nil; saved.leaseUntil = nil; saved.detail = error
-            if let job { saved.state = .sent; saved.jobID = job.id; saved.payload = nil }
+            if let job { try removeFile(saved, db); saved.localFile = nil; saved.state = .sent; saved.jobID = job.id; saved.payload = nil }
             else {
                 saved.state = retry ? .waiting : .paused
                 saved.nextAttempt = now.addingTimeInterval(min(3600, 15 * pow(2, Double(min(saved.attempts, 8)))))
@@ -177,6 +221,7 @@ final class OutboxStore {
     func cancel(_ id: String) throws {
         try transaction { db in
             guard var item = try records(db).first(where: { $0.id == id }) else { return }
+            try removeFile(item, db); item.localFile = nil
             item.state = .cancelled; item.payload = nil; item.lease = nil; item.leaseUntil = nil
             item.detail = "No further retries. This does not cancel work already accepted by the server."
             try save(item, db)

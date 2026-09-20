@@ -10,6 +10,7 @@ import org.json.JSONObject
 fun readShare(context: Context, intent: Intent): List<JSONObject> {
     if (intent.action !in listOf(Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE))
         return emptyList()
+    Store(context).use { it.pruneFiles() }
     @Suppress("DEPRECATION")
     val uris =
         if (intent.action == Intent.ACTION_SEND_MULTIPLE)
@@ -27,28 +28,25 @@ fun readShare(context: Context, intent: Intent): List<JSONObject> {
                 context.contentResolver
                     .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
                     ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "shared-file"
-            val bytes =
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val output = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(32768)
-                    while (output.size() <= MAX_FILE) {
-                        val count =
-                            stream.read(buffer, 0, minOf(buffer.size, MAX_FILE + 1 - output.size()))
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                    }
-                    output.toByteArray()
+            val staged = SharedFiles.file(context, java.util.UUID.randomUUID().toString())
+            try {
+                context.contentResolver.openInputStream(uri)?.use { source ->
+                    staged.outputStream().use { output -> source.copyTo(output, 1024 * 1024) }
                 } ?: error("Could not read the shared file")
-            require(bytes.size <= MAX_FILE) { "$name exceeds the current 4 MiB file limit." }
-            JSONObject()
-                .put("mime_type", mime)
-                .put(
-                    "file",
-                    JSONObject()
-                        .put("name", name)
-                        .put("mime_type", mime)
-                        .put("data_base64", b64(bytes)),
-                )
+                val file = JSONObject().put("name", name).put("mime_type", mime)
+                val input = JSONObject().put("mime_type", mime).put("file", file)
+                if (staged.length() <= MAX_FILE) {
+                    file.put("data_base64", b64(staged.readBytes()))
+                    check(staged.delete()) { "Could not clean up staged content" }
+                } else {
+                    file.put("size", staged.length())
+                    input.put("_local_file", staged.name)
+                }
+                input
+            } catch (error: Exception) {
+                staged.delete()
+                throw error
+            }
         }
     val text =
         intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()

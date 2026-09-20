@@ -17,7 +17,11 @@ final class ProtocolTests: XCTestCase {
         let capability = Capability(manifest: Manifest(id: "audio", title: "Transcribe", description: "Audio to text", accepts: ["audio/*"]), revision: "a", status: "active")
         XCTAssertTrue(capability.accepts("audio/mpeg"))
         XCTAssertFalse(capability.accepts("image/png"))
-        XCTAssertThrowsError(try ShareInput.file(Data(count: 4 * 1024 * 1024 + 1), name: "large.wav", mime: "audio/wav"))
+        let large = try ShareInput.file(Data(count: 4 * 1024 * 1024 + 1), name: "large.wav", mime: "audio/wav")
+        let file = try XCTUnwrap(large.localFile)
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertLessThan(try JSONSerialization.data(withJSONObject: large.payload).count, 1024)
+        XCTAssertEqual(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize, 4 * 1024 * 1024 + 1)
     }
     func testDeviceSigningUsesRawEd25519() throws {
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 1, count: 32))

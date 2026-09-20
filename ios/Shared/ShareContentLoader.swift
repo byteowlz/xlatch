@@ -69,7 +69,7 @@ enum ShareContentLoader {
         }
     }
 
-    private static func readFile(_ url: URL, mime: String? = nil) throws -> ShareInput {
+    static func readFile(_ url: URL, mime: String? = nil) throws -> ShareInput {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         var coordinationError: NSError?

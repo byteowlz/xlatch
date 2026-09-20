@@ -13,6 +13,39 @@ final class OutboxTests: XCTestCase {
         let item = try OutboxItem(input: .text("saved content"), capability: action, connection: connection, now: Date())
         return (directory, store, connection, item)
     }
+    func testLargeFileSurvivesProviderDeletionAndRestartThenCleansUp() throws {
+        let (directory, store, connection, original) = try fixture(maxBytes: 4096)
+        let bytes = Data(repeating: 37, count: 9 * 1024 * 1024)
+        let input = try ShareInput.file(bytes, name: "large.png", mime: "image/png")
+        let source = try XCTUnwrap(input.localFile)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let item = try OutboxItem(input: input, capability: original.capability, connection: connection, now: Date())
+        let queued = try store.enqueue(item)
+        try FileManager.default.removeItem(at: source)
+        let restored = try XCTUnwrap(OutboxStore(directory: directory).items().first)
+        let file = try XCTUnwrap(restored.input().localFile)
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        XCTAssertEqual(restored.id, queued.id)
+        XCTAssertLessThan(try XCTUnwrap(restored.payload).count, 1024)
+        let claimed = try XCTUnwrap(store.claim(id: queued.id))
+        let job = Job(id: "job", capability_id: original.capability.id, status: "queued", result: nil, error: nil, created_at: 0)
+        try store.finish(claimed, job: job)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertNil(try store.items().first?.localFile)
+    }
+    func testLargeFileRetryCannotSubstituteEqualSizeContent() throws {
+        let (_, store, connection, original) = try fixture()
+        let first = try ShareInput.file(Data(repeating: 1, count: 5 * 1024 * 1024), name: "file.png", mime: "image/png")
+        let second = try ShareInput.file(Data(repeating: 2, count: 5 * 1024 * 1024), name: "file.png", mime: "image/png")
+        defer {
+            for input in [first, second] { if let url = input.localFile { try? FileManager.default.removeItem(at: url) } }
+        }
+        let item = try OutboxItem(input: first, capability: original.capability, connection: connection, now: Date())
+        let queued = try store.enqueue(item)
+        defer { if let name = queued.localFile, let file = try? SharedFiles.resolve(name) { try? FileManager.default.removeItem(at: file) } }
+        let changed = try OutboxItem(id: item.id, input: second, capability: original.capability, connection: connection, now: item.created)
+        XCTAssertThrowsError(try store.enqueue(changed))
+    }
     func testIconSurvivesOfflineCacheAndMalformedDataFallsBack() throws {
         let (_, _, _, item) = try fixture()
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32))

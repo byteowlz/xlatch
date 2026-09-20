@@ -17,10 +17,12 @@ struct SendContentIntent: AppIntent {
     static func input(text: String?, file: IntentFile?) throws -> ShareInput {
         let input: ShareInput
         if let file {
-            var value = try ShareInput.file(file.data, name: file.filename, mime: file.type?.preferredMIMEType ?? "application/octet-stream")
+            var value: ShareInput
+            if let url = file.fileURL { value = try ShareContentLoader.readFile(url, mime: file.type?.preferredMIMEType ?? "application/octet-stream") }
+            else { value = try ShareInput.file(file.data, name: file.filename, mime: file.type?.preferredMIMEType ?? "application/octet-stream") }
             if let text, !text.isEmpty {
                 var payload = value.payload; payload["text"] = text
-                value = ShareInput(mime: value.mime, label: value.label, payload: payload)
+                value = ShareInput(mime: value.mime, label: value.label, payload: payload, localFile: value.localFile)
             }
             input = value
         } else if let text, !text.isEmpty {

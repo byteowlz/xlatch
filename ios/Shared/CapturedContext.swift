@@ -30,6 +30,6 @@ struct CapturedContext: Codable {
     func attaching(to input: ShareInput) throws -> ShareInput {
         var payload = input.payload
         payload["text"] = try text()
-        return ShareInput(mime: input.mime, label: input.label, payload: payload)
+        return ShareInput(mime: input.mime, label: input.label, payload: payload, localFile: input.localFile)
     }
 }

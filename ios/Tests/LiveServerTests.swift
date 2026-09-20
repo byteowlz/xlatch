@@ -73,3 +73,37 @@ extension LiveServerTests {
         }
     }
 }
+
+
+extension LiveServerTests {
+    func testLargeUploadResumesThroughSignedClientAndDurableOutbox() async throws {
+        guard let code = ProcessInfo.processInfo.environment["XLATCH_TEST_UPLOAD_TICKET"], !code.isEmpty else { throw XCTSkip("Requires an isolated upload-test server ticket") }
+        let ticket = try JSONDecoder().decode(PairingTicket.self, from: Data(code.utf8))
+        let connection = try await APIClient.pair(ticket, name: "large upload test")
+        let client = try APIClient(connection: connection)
+        let capabilities = try await client.capabilities()
+        let capability = try XCTUnwrap(capabilities.first(where: { $0.id == "upload.save" }))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try OutboxStore(directory: directory)
+        let bytes = Data(repeating: 73, count: 9 * 1024 * 1024 + 13)
+        let input = try ShareInput.file(bytes, name: "ios-large.bin", mime: "application/octet-stream")
+        defer { if let url = input.localFile { try? FileManager.default.removeItem(at: url) } }
+        let item = try store.enqueue(OutboxItem(input: input, capability: capability, connection: connection, now: Date()))
+        struct Ack: Decodable { let offset: Int }
+        let _: Ack = try await client.rpc(["op":"upload", "request":["action":"begin", "id":item.id, "name":"ios-large.bin", "mime_type":"application/octet-stream", "size":bytes.count]])
+        let partial: Ack = try await client.rpc(["op":"upload", "request":["action":"chunk", "id":item.id, "offset":0, "data_base64":bytes.prefix(1024 * 1024).base64EncodedString()]])
+        XCTAssertEqual(partial.offset, 1024 * 1024)
+        let delivery = OutboxDelivery(store: { try OutboxStore(directory: directory) }, connection: { connection }, schedule: {})
+        await delivery.drain()
+        let receipt = try XCTUnwrap(store.items().first)
+        XCTAssertEqual(receipt.state, .sent, receipt.detail ?? "No error detail")
+        let jobID = try XCTUnwrap(receipt.jobID)
+        for _ in 0..<100 {
+            let job: Job = try await client.rpc(["op":"job", "id":jobID])
+            if job.isFinished { XCTAssertEqual(job.status, "succeeded", job.error ?? ""); return }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTFail("Uploaded job did not finish")
+    }
+}

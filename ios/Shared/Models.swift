@@ -33,6 +33,7 @@ struct Manifest: Codable, Hashable {
     let title: String
     let description: String
     let accepts: [String]
+    var file_input: String? = nil
     var icon: ActionIcon? = nil
     var execution: ExecutionKind? = nil
     struct ExecutionKind: Codable, Hashable { let kind: String }
@@ -154,12 +155,20 @@ struct ShareInput {
     let mime: String
     let label: String
     let payload: [String: Any]
+    var localFile: URL? = nil
     static func text(_ text: String, mime: String = "text/plain") -> ShareInput {
         ShareInput(mime: mime, label: text, payload: ["text": text, "mime_type": mime])
     }
     static func file(at url: URL, mime: String) throws -> ShareInput {
         let handle = try FileHandle(forReadingFrom: url)
         defer { handle.closeFile() }
+        let size = try handle.seekToEnd()
+        try handle.seek(toOffset: 0)
+        if size > 4 * 1024 * 1024 {
+            let target = try SharedFiles.copy(handle, size: size)
+            return ShareInput(mime: mime, label: url.lastPathComponent,
+                payload: ["mime_type": mime, "file": ["name": url.lastPathComponent, "mime_type": mime, "size": size]], localFile: target)
+        }
         let limit = 4 * 1024 * 1024
         var data = Data()
         while data.count <= limit {
@@ -169,7 +178,12 @@ struct ShareInput {
         return try file(data, name: url.lastPathComponent, mime: mime)
     }
     static func file(_ data: Data, name: String, mime: String) throws -> ShareInput {
-        guard data.count <= 4 * 1024 * 1024 else { throw ClientError.message("This file is larger than the 4 MB limit in this first version.") }
+        if data.count > 4 * 1024 * 1024 {
+            let target = try SharedFiles.directory().appendingPathComponent(UUID().uuidString)
+            try data.write(to: target, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try SharedFiles.protect(target)
+            return ShareInput(mime: mime, label: name, payload: ["mime_type": mime, "file": ["name": name, "mime_type": mime, "size": data.count]], localFile: target)
+        }
         return ShareInput(mime: mime, label: name, payload: ["mime_type": mime, "file": ["name": name, "mime_type": mime, "data_base64": data.base64EncodedString()]])
     }
 }
@@ -217,5 +231,45 @@ struct CapabilityIcon: View {
             if let image = icon?.image { Image(uiImage: image).resizable().scaledToFit() }
             else { Image(systemName: "bolt.fill").foregroundStyle(.tint) }
         }.frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
+
+/// Private disk-backed content shared by the app and extension, never sent as a host path.
+enum SharedFiles {
+    static func directory() throws -> URL {
+        guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.byteowlz.xlatch") else { throw ClientError.message("Shared file storage is unavailable.") }
+        let directory = root.appendingPathComponent("Outbox/Files", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        try protect(directory)
+        return directory
+    }
+    static func copy(_ source: FileHandle, size: UInt64) throws -> URL {
+        let target = try directory().appendingPathComponent(UUID().uuidString)
+        guard FileManager.default.createFile(atPath: target.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]) else { throw ClientError.message("Could not save the shared file. Check available storage.") }
+        do {
+            try protect(target)
+            let output = try FileHandle(forWritingTo: target); defer { try? output.close() }
+            var remaining = size
+            while remaining > 0 {
+                guard let chunk = try source.read(upToCount: Int(min(remaining, 1024 * 1024))), !chunk.isEmpty else { throw ClientError.message("The source file changed while being shared.") }
+                try output.write(contentsOf: chunk)
+                remaining -= UInt64(chunk.count)
+            }
+            try output.synchronize()
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            throw error
+        }
+    }
+    static func protect(_ url: URL) throws {
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: url.path)
+        var protected = url; var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try protected.setResourceValues(values)
+    }
+    static func resolve(_ name: String) throws -> URL {
+        guard UUID(uuidString: name) != nil else { throw ClientError.message("Invalid saved file identity.") }
+        return try directory().appendingPathComponent(name)
     }
 }

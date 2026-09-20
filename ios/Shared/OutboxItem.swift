@@ -13,6 +13,7 @@ struct OutboxItem: Codable, Identifiable {
     let mime: String
     var label: String
     let payloadHash: Data
+    var localFile: String? = nil
     var payload: Data?
     let created: Date
     let expires: Date
@@ -26,6 +27,7 @@ struct OutboxItem: Codable, Identifiable {
     var detail: String?
 
     init(id: String = UUID().uuidString, input: ShareInput, capability: Capability, connection: Connection, now: Date, chain: [Capability]? = nil) throws {
+        self.localFile = input.localFile?.lastPathComponent
         self.chain = chain
         if let chain { guard (2...16).contains(chain.count), chain.first == capability else { throw ClientError.message("Choose 2–16 chain steps.") } }
         self.id = id; deviceID = connection.deviceID; serverPin = connection.pin
@@ -33,7 +35,13 @@ struct OutboxItem: Codable, Identifiable {
         serverURL = connection.url; self.capability = capability; mime = input.mime
         label = String(input.label.prefix(200))
         payload = try JSONSerialization.data(withJSONObject: input.payload, options: [.sortedKeys])
-        payloadHash = Data(SHA256.hash(data: payload ?? Data()))
+        var digest = SHA256()
+        digest.update(data: payload ?? Data())
+        if let url = input.localFile {
+            let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+            while let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty { digest.update(data: chunk) }
+        }
+        payloadHash = Data(digest.finalize())
         guard let payload, payload.count <= 7 * 1024 * 1024 else { throw ClientError.message("This share exceeds the Outbox item limit.") }
         guard capability.status == "active", capability.accepts(input.mime) else { throw ClientError.message("This target does not accept this content.") }
         created = now; expires = now.addingTimeInterval(7 * 86400); nextAttempt = now
@@ -44,7 +52,7 @@ struct OutboxItem: Codable, Identifiable {
     }
     func input() throws -> ShareInput {
         guard let payload, let value = try JSONSerialization.jsonObject(with: payload) as? [String: Any] else { throw ClientError.message("The saved content is unavailable.") }
-        return ShareInput(mime: mime, label: label, payload: value)
+        return ShareInput(mime: mime, label: label, payload: value, localFile: try localFile.map(SharedFiles.resolve))
     }
     var statusLabel: String {
         switch state {

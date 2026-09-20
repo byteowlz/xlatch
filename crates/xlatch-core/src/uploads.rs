@@ -300,7 +300,18 @@ impl Store {
                 && file.get("data_base64").is_none(),
             "artifact metadata mismatch"
         );
-        if matches!(first.execution, Execution::SaveFile { .. }) {
+        if matches!(first.execution, Execution::SaveFile { .. })
+            && !jsonschema::validator_for(&manifest.input_schema)?.is_valid(input)
+        {
+            // Only the shipped unconstrained byte schema has a lossless reference equivalent.
+            // Do not bypass a custom manifest's byte-length, pattern, or content restrictions.
+            let legacy: Manifest =
+                serde_json::from_str(include_str!("../../../examples/capabilities/echo.json"))?;
+            ensure!(
+                first.input_schema == legacy.input_schema
+                    && manifest.input_schema == legacy.input_schema,
+                "custom save schema needs explicit artifact-reference support"
+            );
             schema_input["file"] = json!({"name":name,"mime_type":mime,"data_base64":""});
         }
         ensure!(

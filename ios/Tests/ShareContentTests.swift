@@ -55,11 +55,14 @@ final class ShareContentTests: XCTestCase {
         XCTAssertNil(input.payload["text"])
     }
 
-    func testBoundedFileReadRejectsOversizeAndPreservesEmptyFiles() throws {
+    func testFileReadStagesLargeFilesAndPreservesEmptyFiles() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: url) }
         try Data(repeating: 42, count: 4 * 1024 * 1024 + 1).write(to: url)
-        XCTAssertThrowsError(try ShareInput.file(at: url, mime: "application/octet-stream"))
+        let large = try ShareInput.file(at: url, mime: "application/octet-stream")
+        let staged = try XCTUnwrap(large.localFile)
+        defer { try? FileManager.default.removeItem(at: staged) }
+        XCTAssertEqual(try Data(contentsOf: staged), try Data(contentsOf: url))
         try Data().write(to: url)
         let input = try ShareInput.file(at: url, mime: "application/octet-stream")
         let file = try XCTUnwrap(input.payload["file"] as? [String: String])

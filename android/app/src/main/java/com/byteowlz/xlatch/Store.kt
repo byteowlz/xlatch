@@ -60,6 +60,7 @@ class Vault {
 
 class Store(context: Context) : SQLiteOpenHelper(context.applicationContext, "xlatch.db", null, 1) {
     private val vault = Vault()
+    private val filesContext = context.applicationContext
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -117,7 +118,29 @@ class Store(context: Context) : SQLiteOpenHelper(context.applicationContext, "xl
             }
 
     fun remove(kind: String, id: String) {
+        val saved = if (kind == "outbox") get(kind, id)?.let(::JSONObject)?.optJSONObject("input") else null
         writableDatabase.delete("records", "kind=? AND id=?", arrayOf(kind, id))
+        saved?.optString("_local_file")?.takeIf { it.isNotEmpty() }?.let { SharedFiles.file(filesContext, it).delete() }
+    }
+
+    fun pruneFiles() {
+        val records = all("outbox").map { it.first to JSONObject(it.second) }
+        val retained = mutableSetOf<String>()
+        val cutoff = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(7)
+        for ((id, item) in records) {
+            val name = item.optJSONObject("input")?.optString("_local_file").orEmpty()
+            if (name.isEmpty()) continue
+            if (item.getLong("created") < cutoff) {
+                item.remove("input")
+                item.put("status", "paused").put("error", "Share expired after seven days; content removed")
+                put("outbox", id, item.toString())
+                SharedFiles.file(filesContext, name).delete()
+            } else retained.add(name)
+        }
+        val orphanCutoff = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(1)
+        java.io.File(filesContext.noBackupFilesDir, "shared-files").listFiles()?.forEach { file ->
+            if (file.name !in retained && file.lastModified() < orphanCutoff) file.delete()
+        }
     }
 
     fun servers() = all("server").map { Server.parse(JSONObject(it.second)) }
@@ -166,7 +189,7 @@ class Store(context: Context) : SQLiteOpenHelper(context.applicationContext, "xl
                 .put("pin", server.pin)
                 .put("capability", action.getJSONObject("manifest").getString("id"))
                 .put("revision", action.getString("revision"))
-                .put("input", input)
+                .put("input", JSONObject(input.toString()))
                 .put("status", "queued")
                 .put("created", System.currentTimeMillis())
         writableDatabase.beginTransaction()
@@ -178,6 +201,10 @@ class Store(context: Context) : SQLiteOpenHelper(context.applicationContext, "xl
                         item.toString().toByteArray().size <= 64L * 1024 * 1024
             ) {
                 "Outbox is full. Remove delivered items first."
+            }
+            input.optString("_local_file").takeIf { it.isNotEmpty() }?.let { name ->
+                SharedFiles.file(filesContext, name).copyTo(SharedFiles.file(filesContext, id))
+                item.getJSONObject("input").put("_local_file", id)
             }
             put("outbox", id, item.toString())
             writableDatabase.setTransactionSuccessful()

@@ -38,6 +38,7 @@ class DeliveryWorker(context: Context, parameters: WorkerParameters) :
         withContext(Dispatchers.IO) {
             val store = Store(applicationContext)
             try {
+                store.pruneFiles()
                 var retry = false
                 for ((id, body) in store.all("outbox")) {
                     val item = JSONObject(body)
@@ -69,6 +70,7 @@ class DeliveryWorker(context: Context, parameters: WorkerParameters) :
                                 "queued"
                         )
                             continue
+                        val input = uploadFile(applicationContext, store, api, server, item, action)
                         val job =
                             api.rpc(
                                 server,
@@ -76,13 +78,15 @@ class DeliveryWorker(context: Context, parameters: WorkerParameters) :
                                     .put("op", "invoke")
                                     .put("capability_id", item.getString("capability"))
                                     .put("revision", item.getString("revision"))
-                                    .put("input", item.getJSONObject("input"))
+                                    .put("input", input)
                                     .put("idempotency_key", id),
                             ) { fraction ->
-                                Uploads.progress.value = Uploads.progress.value + (id to fraction)
+                                if (!item.getJSONObject("input").has("_local_file")) Uploads.progress.value = Uploads.progress.value + (id to fraction)
                             } as JSONObject
+                        val localFile = item.getJSONObject("input").optString("_local_file")
                         item.put("status", "sent").put("job", job.getString("id")).remove("input")
                         store.put("outbox", id, item.toString())
+                        if (localFile.isNotEmpty()) SharedFiles.file(applicationContext, localFile).delete()
                         val poll =
                             OneTimeWorkRequestBuilder<JobWorker>()
                                 .setInputData(
