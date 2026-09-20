@@ -30,7 +30,14 @@ pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Valu
             &idempotency_key,
         )?),
         Request::Jobs => Ok(serde_json::to_value(store.jobs(owner)?)?),
-        Request::Job { id } => job_response(store.job(owner, &id)?),
+        Request::Job { id } => {
+            let mut value = job_response(store.job(owner, &id)?)?;
+            let steps = store.composition_steps(owner, &id)?;
+            if !steps.is_empty() {
+                value["steps"] = serde_json::to_value(steps)?;
+            }
+            Ok(value)
+        }
         Request::Cancel { id } => job_response(store.cancel(owner, &id)?),
         Request::Events { after } => Ok(serde_json::to_value(store.events(owner, after)?)?),
     }

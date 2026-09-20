@@ -23,6 +23,18 @@ final class CapabilityApprovalTests: XCTestCase {
         let changed = try PendingCapabilityApproval(raw.replacingOccurrences(of: "one-session", with: "other-session"), connection: connection)
         XCTAssertFalse(key.publicKey.isValidSignature(signature, for: changed.signingBytes(approve: true)))
     }
+    func testCompositionReviewPreservesExactSignedContract() throws {
+        let raw = payload().replacingOccurrences(of: "\"kind\":\"command\"", with: "\"kind\":\"compose\"")
+        let pending = try PendingCapabilityApproval(raw, connection: connection)
+        XCTAssertEqual(pending.review.manifest["execution"]?["kind"]?.text, "compose")
+        XCTAssertEqual(String(data: pending.signingBytes(approve: true), encoding: .utf8), "xlatch.capability.decision.v1\napprove\n" + raw)
+    }
+    func testJobDecodesCompositionProgressWithoutBreakingLegacyJobs() throws {
+        let raw = #"{"id":"parent","capability_id":"flow","status":"running","created_at":1,"steps":[{"position":0,"job_id":"child","capability_id":"transcribe","revision":"r","status":"succeeded"}]}"#
+        let job = try JSONDecoder().decode(Job.self, from: Data(raw.utf8))
+        XCTAssertEqual(job.steps?.first?.job_id, "child")
+        XCTAssertEqual(job.steps?.first?.status, "succeeded")
+    }
     func testCapabilityReviewRejectsWrongContextAndUnknownExecution() {
         for (old, new) in [("\"server\"", "\"different-server\""), ("\"approver\"", "\"another-device\""), ("\"policy_version\":1", "\"policy_version\":2"), ("\"kind\":\"command\"", "\"kind\":\"unknown\"")] {
             XCTAssertThrowsError(try PendingCapabilityApproval(payload().replacingOccurrences(of: old, with: new), connection: connection))

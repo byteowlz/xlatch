@@ -34,7 +34,7 @@ struct PendingCapabilityApproval {
               review.revision.count == 64, review.revision.allSatisfy({ $0.isHexDigit }),
               review.manifest["id"]?.text != nil,
               let kind = review.manifest["execution"]?["kind"]?.text,
-              ["echo", "save_file", "command"].contains(kind),
+              ["echo", "save_file", "command", "compose"].contains(kind),
               Set(review.devices.map(\.id)).count == review.devices.count else {
             throw ClientError.message("Unsupported approval or incorrect server/device context.")
         }
@@ -180,6 +180,11 @@ struct CapabilityApprovalReviewView: View {
                 Text(pending.review.manifest["description"]?.text ?? "")
                 Text(pending.review.manifest["id"]?.text ?? "").font(.caption.monospaced())
                 Text(pending.review.revision).font(.caption.monospaced()).textSelection(.enabled)
+            }
+            if pending.review.manifest["execution"]?["kind"]?.text == "compose" {
+                Section("Composition") {
+                    Text("This target delegates the exact actions and input mappings shown below. It does not grant independent access to those actions. Changing any referenced revision stops the composition until reviewed again.")
+                }
             }
             Section("Execution") {
                 Text(pending.review.manifest["execution"]?.pretty ?? "").font(.caption.monospaced()).textSelection(.enabled)

@@ -17,6 +17,7 @@ pub async fn execute(
 ) -> Result<Value> {
     manifest.validate_host_binding()?;
     let result = match &manifest.execution {
+        Execution::Compose { .. } => anyhow::bail!("composition must be scheduled by the broker"),
         Execution::Echo => job.input.clone(),
         Execution::SaveFile { directory } => crate::save_file::save(directory, &job.input)?,
 

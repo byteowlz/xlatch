@@ -34,6 +34,11 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Execution {
+    /// Run reviewed independent capabilities in order.
+    Compose {
+        /// Exact leaf contracts and their input wiring.
+        steps: Vec<crate::composition::Step>,
+    },
     /// Return the submitted JSON without side effects.
     Echo,
     /// Save shared content within a fixed, operator-approved directory.
@@ -86,6 +91,9 @@ impl Manifest {
             (1..=3600).contains(&self.timeout_seconds),
             "timeout must be 1–3600 seconds"
         );
+        if let Execution::Compose { steps } = &self.execution {
+            crate::composition::validate(self, steps)?;
+        }
         validate_schema(&self.input_schema)?;
         validate_schema(&self.output_schema)?;
         if let Execution::SaveFile { directory } = &self.execution {
@@ -145,9 +153,24 @@ impl Manifest {
                     "executable hash mismatch"
                 );
             }
+            Execution::Compose { steps } => {
+                for step in steps {
+                    step.manifest.validate_host_binding()?;
+                }
+            }
             Execution::Echo => {}
         }
         Ok(())
+    }
+
+    /// Whether approval delegates host command execution, directly or through composition.
+    #[must_use]
+    pub fn executes_commands(&self) -> bool {
+        match &self.execution {
+            Execution::Command { .. } => true,
+            Execution::Compose { steps } => steps.iter().any(|s| s.manifest.executes_commands()),
+            _ => false,
+        }
     }
 
     /// Content digest to which approval is bound.

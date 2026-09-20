@@ -12,7 +12,7 @@ use gpui_kit::{
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use xlatch_core::{
-    capability::{Capability, Execution, Job, Request},
+    capability::{Capability, Job, Request},
     local::Control,
 };
 use xlatch_desktop::{Draft, Snapshot};
@@ -467,7 +467,7 @@ impl Desktop {
                 .into_any_element();
         };
         let theme = cx.theme().clone();
-        let needs_host_consent = matches!(action.manifest.execution, Execution::Command { .. });
+        let needs_host_consent = action.manifest.executes_commands();
         v_flex().id("action-detail").flex_1().min_w_0().h_full().overflow_y_scroll().gap_3().whitespace_normal()
             .child(div().text_2xl().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(SharedString::from(action.manifest.title.clone())))
             .child(div().w_full().text_color(theme.muted_foreground).child(SharedString::from(action.manifest.description.clone())))

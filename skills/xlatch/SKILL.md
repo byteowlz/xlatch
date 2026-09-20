@@ -77,3 +77,11 @@ JSON is the protocol and CLI interchange format; application configuration uses 
 Keep mobile credentials and request signatures in the existing native client implementation. Address fallback must retain the QR certificate pin and hostname validation; do not bypass TLS or replay an uncertain side-effecting POST across candidates.
 
 External HTTP actions and a central server-side credential store are agreed design directions, not implemented interfaces yet. Do not invent credential commands, HTTP executor variants, or client-side secret distribution. Future Oqto integration must map its account/workspace permissions explicitly; a paired device is not an Oqto account.
+
+## Compositions
+
+Use `xlatch compose NEW_ID --steps FIRST,SECOND --dry-run` to inspect a proposal joining registered capabilities. Omit `--dry-run` to register it pending. Each composition has its own exact revision, approval and grants; a parent grant delegates only the pinned steps, not direct child access. Protected mode uses the normal phone approval flow.
+
+Transcription should remain an independent action, then compose it with the existing Pi action. Do not rewrite Pi's arbitrary-file input or copied-file-path behavior. Direct joins require compatible output/input schemas; use `--spec plan.json` or TOML for explicit mappings and a stricter final receipt schema. See `docs/compositions.md` in the xlatch repository. A leaf reporting business failure in an otherwise successful JSON response must expose that in its schema or the composition's final receipt constraint.
+
+Inspect step receipts after failure; never automatically replay an interrupted side effect. Changing a dependency requires reviewing a new composition revision. Nested compositions, ad-hoc phone chain submission and fan-out are not implemented by this CLI feature.

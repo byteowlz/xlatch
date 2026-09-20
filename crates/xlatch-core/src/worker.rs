@@ -4,7 +4,7 @@ use crate::{
     capability::{Job, Manifest},
     store::Store,
 };
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
 use std::{
@@ -30,8 +30,8 @@ impl Store {
         reason: &str,
     ) -> Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("INSERT INTO events(job_id,owner,status) SELECT id,owner,'failed' FROM jobs WHERE status='running' AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",[expired_before])?;
-        tx.execute("UPDATE jobs SET status='failed',error=?2 WHERE status='running' AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",params![expired_before,reason])?;
+        tx.execute("INSERT INTO events(job_id,owner,status) SELECT id,owner,'failed' FROM jobs WHERE status='running' AND json_extract(manifest,'$.execution.kind')<>'compose' AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",[expired_before])?;
+        tx.execute("UPDATE jobs SET status='failed',error=?2 WHERE status='running' AND json_extract(manifest,'$.execution.kind')<>'compose' AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",params![expired_before,reason])?;
         tx.execute(
             "DELETE FROM executor_leases WHERE ?1 IS NULL OR expires_at<?1",
             [expired_before],
@@ -41,10 +41,11 @@ impl Store {
     }
 
     pub(crate) fn claim(&mut self, lease: Option<&str>) -> Result<Option<(Job, Manifest)>> {
+        self.advance_compositions()?;
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let selected:Option<(String,String)>=tx.query_row("SELECT id,manifest FROM jobs WHERE status='queued' ORDER BY created_at,rowid LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        let selected:Option<(String,String)>=tx.query_row("SELECT id,manifest FROM jobs WHERE status='queued' AND json_extract(manifest,'$.execution.kind')<>'compose' ORDER BY created_at,rowid LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
         let Some((id, body)) = selected else {
             return Ok(None);
         };
@@ -108,20 +109,17 @@ pub async fn run(dir: PathBuf) -> Result<()> {
 
 async fn execute(dir: &Path, job: &Job, manifest: &Manifest) -> Result<Value> {
     let store = Store::open(dir)?;
-    let current = store.capability(&job.capability_id)?;
-    ensure!(
-        current.status == "active"
-            && current.revision == job.revision
-            && store.has_grant(&job.owner, &job.capability_id, &job.revision)?,
-        "approval or permission changed before execution"
-    );
+    store.authorize_job(job)?;
     crate::execution::execute(dir, job, manifest, wait_for_cancellation(dir, &job.id)).await
 }
 
 async fn wait_for_cancellation(dir: &Path, id: &str) -> Result<()> {
     loop {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        if Store::open(dir)?.job("local", id)?.status == "cancelled" {
+        let store = Store::open(dir)?;
+        let job = store.job("local", id)?;
+        store.authorize_job(&job)?;
+        if job.status == "cancelled" {
             return Ok(());
         }
     }

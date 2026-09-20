@@ -40,6 +40,7 @@ struct Job: Codable, Identifiable {
     let result: JSONValue?
     let error: String?
     let created_at: Int64
+    var steps: [CompositionStep]? = nil
     var isFinished: Bool { ["succeeded", "failed", "cancelled"].contains(status) }
     var statusLabel: String {
         switch status {
@@ -51,6 +52,16 @@ struct Job: Codable, Identifiable {
         default: status.capitalized
         }
     }
+}
+
+struct CompositionStep: Codable, Identifiable {
+    let position: Int
+    let job_id: String
+    let capability_id: String
+    let revision: String
+    let status: String
+    let error: String?
+    var id: String { job_id }
 }
 
 enum JSONValue: Codable {

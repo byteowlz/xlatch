@@ -104,6 +104,7 @@ impl Store {
             "revision changed; review again"
         );
         capability.manifest.validate()?;
+        crate::composition_store::dependencies(&self.conn, &capability.manifest)?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -198,6 +199,7 @@ impl Store {
 
 fn activate(conn: &Connection, review: &ApprovalReview) -> Result<()> {
     review.manifest.validate()?;
+    crate::composition_store::dependencies(conn, &review.manifest)?;
     ensure!(
         review.manifest.revision()? == review.revision,
         "manifest digest mismatch"

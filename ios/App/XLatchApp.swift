@@ -355,6 +355,19 @@ struct JobView: View {
         List {
             if let job {
                 Section { LabeledContent("Status", value: job.statusLabel) }
+                if let steps = job.steps, !steps.isEmpty {
+                    Section("Steps") {
+                        ForEach(steps) { step in
+                            NavigationLink { JobView(id: step.job_id) } label: {
+                                VStack(alignment: .leading) {
+                                    Text("\(step.position + 1). \(step.capability_id)")
+                                    Text(step.status.capitalized).font(.caption).foregroundStyle(.secondary)
+                                    if let error = step.error { Text(error).font(.caption).foregroundStyle(.red) }
+                                }
+                            }
+                        }
+                    }
+                }
                 if let result = job.result {
                     Section("Result") {
                         if let resultFile {

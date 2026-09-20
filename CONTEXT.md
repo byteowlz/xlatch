@@ -15,3 +15,5 @@
 **Local operator**: The trusted OS user running the daemon. Local agents sharing that identity share its authority in v0.
 
 **Outbox item**: Content saved on a client for delivery to one exact capability revision, with a stable invocation ID. It is not a server Job until accepted.
+
+**Composition**: A capability that passes results through an ordered set of exact capability revisions, with its own approval and grants.

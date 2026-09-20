@@ -53,3 +53,6 @@ pub mod history;
 pub mod host_trust;
 
 pub mod recovery;
+
+pub mod composition;
+mod composition_store;

@@ -61,17 +61,8 @@ impl Store {
         let Some((job, manifest)) = self.claim(Some(&lease))? else {
             return Ok(None);
         };
-        let current = self.capability(&job.capability_id)?;
-        if current.status != "active"
-            || current.revision != job.revision
-            || !self.has_grant(&job.owner, &job.capability_id, &job.revision)?
-        {
-            self.finish(
-                &job,
-                Err(anyhow::anyhow!(
-                    "approval or permission changed before execution"
-                )),
-            )?;
+        if let Err(error) = self.authorize_job(&job) {
+            self.finish(&job, Err(error))?;
             return Ok(None);
         }
         Ok(Some(Work {
@@ -151,7 +142,9 @@ pub fn dispatch(store: &mut Store, request: ExecutorRequest) -> Result<Value> {
             Ok(serde_json::to_value(store.lease_work()?)?)
         }
         ExecutorRequest::Status { id, lease } => {
-            Ok(json!({"status":store.leased_job(&id,&lease)?.status}))
+            let job = store.leased_job(&id, &lease)?;
+            store.authorize_job(&job)?;
+            Ok(json!({"status":job.status}))
         }
         ExecutorRequest::Complete {
             id,

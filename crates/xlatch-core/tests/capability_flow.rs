@@ -1227,3 +1227,229 @@ fn content_history_omits_binary_and_enforces_expiry_without_deleting_jobs() -> R
     assert_eq!(store.job("local", &job.id)?.input, input);
     Ok(())
 }
+
+fn composed_fixture(
+    store: &mut Store,
+    binding: xlatch_core::composition::Binding,
+) -> Result<xlatch_core::capability::Capability> {
+    use xlatch_core::composition::{Binding, Step};
+    let mut first = manifest();
+    first.output_schema = first.input_schema.clone();
+    let cap = store.register(&first)?;
+    store.approve("echo", &cap.revision, false)?;
+    let mut second = first.clone();
+    second.id = "second".into();
+    let second_cap = store.register(&second)?;
+    store.approve("second", &second_cap.revision, false)?;
+    let mut composed = first.clone();
+    composed.id = "composed".into();
+    composed.timeout_seconds = 10;
+    composed.execution = Execution::Compose {
+        steps: vec![
+            Step {
+                manifest: first,
+                revision: cap.revision,
+                input: Binding::Previous,
+            },
+            Step {
+                manifest: second,
+                revision: second_cap.revision,
+                input: binding,
+            },
+        ],
+    };
+    let result = store.register(&composed)?;
+    store.approve("composed", &result.revision, false)?;
+    Ok(result)
+}
+fn claim_step(store: &mut Store) -> Result<Option<xlatch_core::executor::Work>> {
+    Ok(serde_json::from_value(xlatch_core::executor::dispatch(
+        store,
+        xlatch_core::executor::ExecutorRequest::Claim,
+    )?)?)
+}
+fn complete_step(
+    store: &mut Store,
+    work: &xlatch_core::executor::Work,
+    value: serde_json::Value,
+) -> Result<()> {
+    xlatch_core::executor::dispatch(
+        store,
+        xlatch_core::executor::ExecutorRequest::Complete {
+            id: work.job.id.clone(),
+            lease: work.lease.clone(),
+            result: Some(value),
+            error: None,
+        },
+    )?;
+    Ok(())
+}
+#[test]
+fn composition_delegates_only_reviewed_steps_and_checkpoints_across_restart() -> Result<()> {
+    use xlatch_core::composition::Binding;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = composed_fixture(&mut store, Binding::Previous)?;
+    let (owner, _) = pair(&mut store, 111)?;
+    store.grant(&owner, "composed", &cap.revision)?;
+    let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    conn.execute(
+        "DELETE FROM grants WHERE device_id=?1 AND capability_id='echo'",
+        [&owner],
+    )?;
+    let input = json!({"text":"transcript"});
+    let first_cap = store.capability("echo")?;
+    assert!(
+        store
+            .invoke(&owner, "echo", &first_cap.revision, &input, "direct")
+            .is_err()
+    );
+    let parent = store.invoke(&owner, "composed", &cap.revision, &input, "stable")?;
+    let first = claim_step(&mut store)?.context("first step")?;
+    assert_eq!(first.job.capability_id, "echo");
+    complete_step(&mut store, &first, input.clone())?;
+    drop(store);
+    let mut store = fixture.store()?;
+    store.recover()?;
+    let second = claim_step(&mut store)?.context("second step")?;
+    assert_eq!(second.job.capability_id, "second");
+    assert_eq!(second.job.input, input);
+    assert_ne!(second.job.id, first.job.id);
+    complete_step(&mut store, &second, input.clone())?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job(&owner, &parent.id)?.status, "succeeded");
+    assert_eq!(store.job(&owner, &parent.id)?.result, Some(input.clone()));
+    assert_eq!(
+        store
+            .invoke(&owner, "composed", &cap.revision, &input, "stable")?
+            .id,
+        parent.id
+    );
+    assert_eq!(store.composition_steps(&owner, &parent.id)?.len(), 2);
+    assert!(store.composition_steps("other", &parent.id).is_err());
+    assert_eq!(store.jobs(&owner)?.len(), 1);
+    assert!(
+        store
+            .events(&owner, 0)?
+            .iter()
+            .all(|event| event.job_id == parent.id)
+    );
+    Ok(())
+}
+#[test]
+fn composition_mapping_failure_preserves_result_and_never_starts_next_step() -> Result<()> {
+    use xlatch_core::composition::{Binding, Source};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let binding = Binding::Fields {
+        fields: std::collections::BTreeMap::from([(
+            "text".into(),
+            Source::Previous {
+                pointer: "/missing".into(),
+            },
+        )]),
+    };
+    let cap = composed_fixture(&mut store, binding)?;
+    let parent = store.invoke(
+        "local",
+        "composed",
+        &cap.revision,
+        &json!({"text":"original"}),
+        "map",
+    )?;
+    let first = claim_step(&mut store)?.context("step")?;
+    complete_step(&mut store, &first, json!({"text":"saved transcript"}))?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job("local", &parent.id)?.status, "failed");
+    assert_eq!(store.composition_steps("local", &parent.id)?.len(), 1);
+    assert_eq!(
+        store.job("local", &first.job.id)?.result,
+        Some(json!({"text":"saved transcript"}))
+    );
+    Ok(())
+}
+#[test]
+fn composition_cancellation_and_changed_dependencies_stop_delegation() -> Result<()> {
+    use xlatch_core::composition::Binding;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = composed_fixture(&mut store, Binding::Previous)?;
+    let input = json!({"text":"test"});
+    let parent = store.invoke("local", "composed", &cap.revision, &input, "cancel")?;
+    let first = claim_step(&mut store)?.context("step")?;
+    store.cancel("local", &parent.id)?;
+    complete_step(&mut store, &first, input.clone())?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job("local", &first.job.id)?.status, "cancelled");
+    let parent = store.invoke("local", "composed", &cap.revision, &input, "change")?;
+    let first = claim_step(&mut store)?.context("step")?;
+    complete_step(&mut store, &first, input)?;
+    let mut changed = store.capability("second")?.manifest;
+    changed.title = "changed".into();
+    store.register(&changed)?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job("local", &parent.id)?.status, "failed");
+    assert_eq!(store.composition_steps("local", &parent.id)?.len(), 1);
+    Ok(())
+}
+#[test]
+fn composition_types_are_conservative_and_mappings_do_not_coerce() -> Result<()> {
+    use xlatch_core::composition::{Binding, Source, compatible};
+    let text = json!({"type":"object","required":["text"],"properties":{"text":{"type":"string"}},"additionalProperties":false});
+    assert!(!compatible(&json!({"type":"object"}), &text));
+    assert!(compatible(&text, &text));
+    assert!(!compatible(
+        &text,
+        &json!({"type":"object","additionalProperties":{"type":"integer"}})
+    ));
+    let binding = Binding::Fields {
+        fields: std::collections::BTreeMap::from([
+            (
+                "text".into(),
+                Source::Previous {
+                    pointer: "/transcript".into(),
+                },
+            ),
+            (
+                "mime_type".into(),
+                Source::Literal {
+                    value: json!("text/plain"),
+                },
+            ),
+        ]),
+    };
+    assert_eq!(
+        binding.apply(&json!({}), &json!({"transcript":"hello"}))?,
+        json!({"text":"hello","mime_type":"text/plain"})
+    );
+    assert!(binding.apply(&json!({}), &json!({})).is_err());
+    Ok(())
+}
+
+#[test]
+fn composition_enforces_final_receipt_and_never_replays_uncertain_step() -> Result<()> {
+    use xlatch_core::composition::Binding;
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let mut cap = composed_fixture(&mut store, Binding::Previous)?;
+    cap.manifest.output_schema =
+        json!({"type":"object","required":["ok"],"properties":{"ok":{"const":true}}});
+    cap = store.register(&cap.manifest)?;
+    store.approve("composed", &cap.revision, false)?;
+    let input = json!({"text":"test"});
+    let parent = store.invoke("local", "composed", &cap.revision, &input, "receipt")?;
+    let first = claim_step(&mut store)?.context("first")?;
+    complete_step(&mut store, &first, input.clone())?;
+    let second = claim_step(&mut store)?.context("second")?;
+    complete_step(&mut store, &second, input.clone())?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job("local", &parent.id)?.status, "failed");
+    let parent = store.invoke("local", "composed", &cap.revision, &input, "interrupted")?;
+    let running = claim_step(&mut store)?.context("running")?;
+    store.recover()?;
+    assert!(claim_step(&mut store)?.is_none());
+    assert_eq!(store.job("local", &parent.id)?.status, "failed");
+    assert_eq!(store.composition_steps("local", &parent.id)?.len(), 1);
+    assert_eq!(store.job("local", &running.job.id)?.status, "failed");
+    Ok(())
+}

@@ -1,6 +1,6 @@
 //! Private `SQLite` storage and atomic capability/job transitions.
 
-use crate::capability::{Capability, Event, Execution, Job, Manifest};
+use crate::capability::{Capability, Event, Job, Manifest};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
@@ -49,7 +49,7 @@ impl Store {
         let conn = Connection::open(dir.join("xlatch.sqlite3"))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 6, "database was created by a newer xlatch");
+        ensure!(version <= 7, "database was created by a newer xlatch");
         conn.pragma_update(None, "foreign_keys", true)?;
         if version == 0 {
             conn.execute_batch(include_str!("../migrations/001.sql"))?;
@@ -69,6 +69,9 @@ impl Store {
         }
         if version < 6 {
             conn.execute_batch(include_str!("../migrations/006.sql"))?;
+        }
+        if version < 7 {
+            conn.execute_batch(include_str!("../migrations/007.sql"))?;
         }
         Ok(Self { conn })
     }
@@ -120,11 +123,11 @@ impl Store {
             "revision changed; review again"
         );
         ensure!(
-            !matches!(capability.manifest.execution, Execution::Command { .. })
-                || allow_host_execution,
+            !capability.manifest.executes_commands() || allow_host_execution,
             "command executes with the daemon user's privileges; approval requires --allow-host-execution"
         );
         capability.manifest.validate()?;
+        crate::composition_store::dependencies(&self.conn, &capability.manifest)?;
         capability.manifest.validate_host_binding()?;
         let count = self.conn.execute(
             "UPDATE capabilities SET status='active' WHERE id=?1 AND revision=?2",
@@ -234,6 +237,7 @@ impl Store {
             self.has_grant(owner, id, revision)?,
             "capability permission denied"
         );
+        crate::composition_store::dependencies(&self.conn, &capability.manifest)?;
         let validator = jsonschema::validator_for(&capability.manifest.input_schema)?;
         ensure!(
             validator.is_valid(input),
@@ -307,7 +311,7 @@ impl Store {
     /// # Errors
     /// Returns database errors.
     pub fn jobs(&self, owner: &str) -> Result<Vec<Job>> {
-        let mut stmt = self.conn.prepare("SELECT id FROM jobs WHERE owner=?1 OR ?1='local' ORDER BY created_at DESC,rowid DESC LIMIT 100")?;
+        let mut stmt = self.conn.prepare("SELECT id FROM jobs WHERE (owner=?1 OR ?1='local') AND id NOT IN (SELECT child_id FROM composition_steps) ORDER BY created_at DESC,rowid DESC LIMIT 100")?;
         let ids = stmt
             .query_map([owner], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -333,6 +337,7 @@ impl Store {
         )?;
         if changed > 0 {
             self.event(id, &job.owner, "cancelled")?;
+            self.cancel_composition_children(id)?;
         }
         self.job(owner, id)
     }
@@ -350,7 +355,7 @@ impl Store {
     /// # Errors
     /// Returns database errors.
     pub fn events(&self, owner: &str, after: i64) -> Result<Vec<Event>> {
-        let mut stmt = self.conn.prepare("SELECT sequence,job_id,status FROM events WHERE sequence>?1 AND (owner=?2 OR ?2='local') ORDER BY sequence LIMIT 100")?;
+        let mut stmt = self.conn.prepare("SELECT sequence,job_id,status FROM events WHERE sequence>?1 AND (owner=?2 OR ?2='local') AND job_id NOT IN (SELECT child_id FROM composition_steps) ORDER BY sequence LIMIT 100")?;
         Ok(stmt
             .query_map(params![after, owner], |r| {
                 Ok(Event {

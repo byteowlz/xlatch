@@ -1,5 +1,6 @@
 //! Local operator CLI for `CrossLatch`.
 
+mod compose;
 mod destination;
 mod history;
 mod network;
@@ -40,6 +41,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Combine existing actions into a new pending share target.
+    Compose(compose::Options),
     /// Configure and export optional server-side routing history (local operator only).
     History {
         #[command(subcommand)]
@@ -147,6 +150,7 @@ async fn main() -> Result<()> {
     let control_dir = cli.control_dir.unwrap_or_else(|| data_dir.clone());
     let mut wait_for = None;
     let control = match cli.command {
+        Command::Compose(options) => return compose::dispatch(&control_dir, options).await,
         Command::History { command } => return history::dispatch(&data_dir, command),
         Command::Identity => return pairing::identity(&control_dir, cli.json).await,
         Command::Executor { work_dir } => {
