@@ -127,6 +127,7 @@ final class ShareViewController: UIViewController {
 }
 
 struct ShareView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var model: ShareModel
     @State private var namingChain = false
     @State private var chainName = ""
@@ -146,7 +147,9 @@ struct ShareView: View {
             Button("Submit for approval") { Task { await model.saveChain(title: chainName) } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("The new target needs approval before it becomes available.") }
-        .tint(Color(red: 0.12, green: 0.43, blue: 0.34))
+        .tint(colorScheme == .dark
+            ? Color(red: 0.38, green: 0.85, blue: 0.68)
+            : Color(red: 0.12, green: 0.43, blue: 0.34))
     }
     private var confirmation: some View {
         VStack(spacing: 20) {
@@ -230,14 +233,16 @@ private struct ShareTargetRow: View {
                 HStack {
                     CapabilityIcon(icon: capability.manifest.icon)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(capability.manifest.title).font(.headline)
-                        Text(capability.manifest.description).font(.subheadline).foregroundStyle(.secondary)
+                        Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
+                        Text(capability.manifest.description).font(.subheadline).foregroundStyle(Color(uiColor: .secondaryLabel))
                     }
-                    Spacer()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     if model.sending == capability.id { ProgressView() }
-                    else { Image(systemName: "arrow.up.right") }
+                    else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
                 }.contentShape(Rectangle())
-            }.buttonStyle(.borderless)
+            }.buttonStyle(.plain)
             if canExtend {
                 Menu {
                     Button("Add step", systemImage: "link") { Task { await model.addStep(capability) } }
