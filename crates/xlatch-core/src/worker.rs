@@ -108,9 +108,22 @@ pub async fn run(dir: PathBuf) -> Result<()> {
 }
 
 async fn execute(dir: &Path, job: &Job, manifest: &Manifest) -> Result<Value> {
-    let store = Store::open(dir)?;
-    store.authorize_job(job)?;
-    crate::execution::execute(dir, job, manifest, wait_for_cancellation(dir, &job.id)).await
+    Store::open(dir)?.authorize_job(job)?;
+    let staged = crate::uploads::stage(dir, job, |offset| {
+        std::future::ready(Store::open(dir).and_then(|store| {
+            let current = store.job("local", &job.id)?;
+            store.job_upload_chunk(&current, offset)
+        }))
+    })
+    .await?;
+    crate::execution::execute(
+        dir,
+        job,
+        manifest,
+        staged.as_ref().map(|s| s.path.as_path()),
+        wait_for_cancellation(dir, &job.id),
+    )
+    .await
 }
 
 async fn wait_for_cancellation(dir: &Path, id: &str) -> Result<()> {

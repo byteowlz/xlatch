@@ -58,3 +58,4 @@ pub mod chain;
 pub mod composition;
 mod composition_store;
 pub mod icon;
+pub mod uploads;

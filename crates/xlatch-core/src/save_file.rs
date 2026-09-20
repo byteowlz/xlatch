@@ -2,43 +2,28 @@
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
-use std::{io::Write, path::Path};
+use std::{
+    io::{Cursor, Read, Write},
+    path::Path,
+};
 
-pub fn save(directory: &str, input: &Value) -> Result<Value> {
+#[cfg(test)]
+pub async fn save(directory: &str, input: &Value) -> Result<Value> {
+    save_prepared(directory, input, None).await
+}
+
+pub async fn save_prepared(
+    directory: &str,
+    input: &Value,
+    prepared: Option<&Path>,
+) -> Result<Value> {
     let directory = Path::new(directory);
     ensure!(
         std::fs::canonicalize(directory)? == directory,
         "save destination changed since approval"
     );
-    let (name, bytes) = if let Some(file) = input.get("file") {
-        let raw = file["name"].as_str().context("missing filename")?;
-        let name = raw.rsplit(['/', '\\']).next().context("missing filename")?;
-        ensure!(
-            !name.is_empty()
-                && name != "."
-                && name != ".."
-                && name.len() <= 180
-                && !name.chars().any(char::is_control),
-            "invalid filename"
-        );
-        (
-            name.to_owned(),
-            STANDARD.decode(file["data_base64"].as_str().context("missing file data")?)?,
-        )
-    } else {
-        (
-            format!("shared-{}.txt", crate::store::now()),
-            input["text"]
-                .as_str()
-                .context("missing shared text")?
-                .as_bytes()
-                .to_vec(),
-        )
-    };
-    ensure!(
-        bytes.len() <= 4 * 1024 * 1024,
-        "shared content exceeds 4 MiB"
-    );
+    let (name, mut source) = content_source(input, prepared)?;
+
     for suffix in 0..1000 {
         let filename = if suffix == 0 {
             name.clone()
@@ -66,28 +51,96 @@ pub fn save(directory: &str, input: &Value) -> Result<Value> {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.into()),
         };
-        file.write_all(&bytes)?;
+        let mut pending = PendingSave {
+            path: path.clone(),
+            complete: false,
+        };
+        let mut buffer = vec![0; 1024 * 1024];
+        let mut bytes = 0u64;
+        loop {
+            let count = source.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            file.write_all(&buffer[..count])?;
+            bytes += count as u64;
+            tokio::task::yield_now().await;
+        }
         file.sync_all()?;
+        pending.complete = true;
         return Ok(
-            json!({"text":format!("Saved {filename}"),"filename":filename,"path":path,"bytes":bytes.len()}),
+            json!({"text":format!("Saved {filename}"),"filename":filename,"path":path,"bytes":bytes}),
         );
     }
     anyhow::bail!("too many filename collisions")
 }
 
+fn content_source(
+    input: &Value,
+    prepared: Option<&Path>,
+) -> Result<(String, Box<dyn Read + Send>)> {
+    Ok(if let Some(file) = input.get("file") {
+        let raw = file["name"].as_str().context("missing filename")?;
+        let name = raw.rsplit(['/', '\\']).next().context("missing filename")?;
+        ensure!(
+            !name.is_empty()
+                && name != "."
+                && name != ".."
+                && name.len() <= 180
+                && !name.chars().any(char::is_control),
+            "invalid filename"
+        );
+        let reader: Box<dyn Read + Send> = if let Some(path) = prepared {
+            Box::new(std::fs::File::open(path)?)
+        } else {
+            let bytes =
+                STANDARD.decode(file["data_base64"].as_str().context("missing file data")?)?;
+            ensure!(
+                bytes.len() <= 4 * 1024 * 1024,
+                "inline content exceeds 4 MiB; upload the file instead"
+            );
+            Box::new(Cursor::new(bytes))
+        };
+        (name.to_owned(), reader)
+    } else {
+        (
+            format!("shared-{}.txt", crate::store::now()),
+            Box::new(Cursor::new(
+                input["text"]
+                    .as_str()
+                    .context("missing shared text")?
+                    .as_bytes()
+                    .to_vec(),
+            )),
+        )
+    })
+}
+
+struct PendingSave {
+    path: std::path::PathBuf,
+    complete: bool,
+}
+impl Drop for PendingSave {
+    fn drop(&mut self) {
+        if !self.complete {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn saves_content_without_traversal_or_overwrite() -> Result<()> {
+    #[tokio::test]
+    async fn saves_content_without_traversal_or_overwrite() -> Result<()> {
         let dir = std::env::temp_dir().join(format!("xlatch-save-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&dir)?;
         let dir = std::fs::canonicalize(dir)?;
         let name = dir.to_str().context("invalid temp path")?;
         let input =
             json!({"file":{"name":"../../note.txt","data_base64":STANDARD.encode(b"hello")}});
-        let first = save(name, &input)?;
-        let second = save(name, &input)?;
+        let first = save(name, &input).await?;
+        let second = save(name, &input).await?;
         ensure!(
             first["filename"] == "note.txt" && second["filename"] == "note-1.txt",
             "collision names incorrect"
@@ -97,10 +150,12 @@ mod tests {
             "saved bytes differ"
         );
         ensure!(
-            save(name, &json!({"file":{"name":"..","data_base64":""}})).is_err(),
+            save(name, &json!({"file":{"name":"..","data_base64":""}}))
+                .await
+                .is_err(),
             "unsafe name accepted"
         );
-        let text = save(name, &json!({"text":"a shared link"}))?;
+        let text = save(name, &json!({"text":"a shared link"})).await?;
         ensure!(
             std::fs::read_to_string(text["path"].as_str().context("missing path")?)?
                 == "a shared link",

@@ -13,13 +13,24 @@ pub async fn execute(
     dir: &Path,
     job: &Job,
     manifest: &Manifest,
+    prepared_file: Option<&Path>,
     cancellation: impl std::future::Future<Output = Result<()>>,
 ) -> Result<Value> {
     manifest.validate_host_binding()?;
+    let mut prepared_job = job.clone();
+    if let Some(path) = prepared_file {
+        prepared_job.input["file"]["path"] = serde_json::to_value(path)?;
+    }
+    let job = &prepared_job;
     let result = match &manifest.execution {
         Execution::Compose { .. } => anyhow::bail!("composition must be scheduled by the broker"),
         Execution::Echo => job.input.clone(),
-        Execution::SaveFile { directory } => crate::save_file::save(directory, &job.input)?,
+        Execution::SaveFile { directory } => {
+            tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(manifest.timeout_seconds), crate::save_file::save_prepared(directory, &job.input, prepared_file)) => result.context("job timed out")??,
+                result = cancellation => { result?; anyhow::bail!("job cancelled") }
+            }
+        }
 
         Execution::Command { .. } => run_command(dir, job, manifest, cancellation).await?,
     };

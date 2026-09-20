@@ -144,11 +144,7 @@ impl Store {
             serde_json::to_vec(&input)?.len() <= crate::capability::MAX_BYTES,
             "mapped input exceeds request limit"
         );
-        ensure!(
-            jsonschema::validator_for(&step.manifest.input_schema)?.is_valid(&input),
-            "mapped input for {} does not match its schema",
-            step.manifest.id
-        );
+        let upload = self.validate_file_input(&parent.owner, &step.manifest, &input)?;
         let id = uuid::Uuid::new_v4().to_string();
         // Distinct reserved owner-scoped key: internal creation is never a caller invocation.
         let key = format!("composition:{}:{position}", parent.id);
@@ -157,6 +153,7 @@ impl Store {
             "INSERT INTO composition_steps VALUES(?1,?2,?3)",
             params![parent.id, position, id],
         )?;
+        self.bind_upload(&id, upload.as_deref())?;
         self.event(&id, &parent.owner, "queued")?;
         self.event(&parent.id, &parent.owner, "running")?;
         Ok(())

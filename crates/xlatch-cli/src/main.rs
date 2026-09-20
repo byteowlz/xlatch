@@ -41,6 +41,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect upload limits, or apply a JSON policy file (trusted operator).
+    Uploads {
+        #[arg(long)]
+        policy: Option<PathBuf>,
+    },
     /// Combine existing actions into a new pending share target.
     Compose(compose::Options),
     /// Configure and export optional server-side routing history (local operator only).
@@ -174,13 +179,8 @@ async fn main() -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "xlatch", &mut std::io::stdout());
             return Ok(());
         }
-        Command::Register { manifest, icon } => {
-            let mut manifest: Manifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
-            if let Some(path) = icon {
-                manifest.icon = Some(xlatch_core::icon::Icon::from_file(&path)?);
-            }
-            Control::Register { manifest }
-        }
+        Command::Uploads { policy } => return uploads_policy(&data_dir, policy.as_deref()),
+        Command::Register { manifest, icon } => register_control(&manifest, icon.as_deref())?,
         Command::Approve {
             id,
             revision,
@@ -283,5 +283,28 @@ async fn finish_output(
     if value.get("status").and_then(Value::as_str) == Some("failed") {
         anyhow::bail!("job failed");
     }
+    Ok(())
+}
+
+fn register_control(path: &std::path::Path, icon: Option<&std::path::Path>) -> Result<Control> {
+    let mut manifest: Manifest = serde_json::from_slice(&std::fs::read(path)?)?;
+    if let Some(path) = icon {
+        manifest.icon = Some(xlatch_core::icon::Icon::from_file(path)?);
+    }
+    Ok(Control::Register { manifest })
+}
+
+fn uploads_policy(dir: &std::path::Path, path: Option<&std::path::Path>) -> Result<()> {
+    let store = xlatch_core::store::Store::open(dir)?;
+    if let Some(path) = path {
+        let raw = std::fs::read_to_string(path)?;
+        let policy = if path.extension().is_some_and(|ext| ext == "toml") {
+            toml::from_str(&raw)?
+        } else {
+            serde_json::from_str(&raw)?
+        };
+        store.set_upload_policy(&policy)?;
+    }
+    println!("{}", serde_json::to_string_pretty(&store.upload_policy()?)?);
     Ok(())
 }

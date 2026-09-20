@@ -87,6 +87,11 @@ impl Store {
         let last = steps.last().context("missing last step")?;
         let manifest = Manifest {
             icon: None,
+            file_input: if matches!(first.manifest.execution, Execution::SaveFile { .. }) {
+                Some(crate::uploads::FileInput::Path)
+            } else {
+                first.manifest.file_input
+            },
             id,
             title,
             description: "Run the selected action revisions in order".into(),
@@ -134,10 +139,10 @@ impl Store {
             self.chain_manifest(owner, refs, "one-off-chain".into(), "Shared chain".into())?;
         let revision = manifest.revision()?;
         ensure!(
-            serde_json::to_vec(input)?.len() <= crate::capability::MAX_BYTES
-                && jsonschema::validator_for(&manifest.input_schema)?.is_valid(input),
+            serde_json::to_vec(input)?.len() <= crate::capability::MAX_BYTES,
             "invalid chain input"
         );
+        let upload = self.validate_file_input(owner, &manifest, input)?;
         if let Some(id) = self
             .conn
             .query_row(
@@ -165,6 +170,7 @@ impl Store {
         self.conn.execute("INSERT INTO jobs(id,capability_id,revision,manifest,owner,status,input,idempotency_key,created_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?7,?8)",params![id,manifest.id,revision,serde_json::to_string(&manifest)?,owner,serde_json::to_string(input)?,key,now()])?;
         self.conn
             .execute("INSERT INTO transient_compositions VALUES(?1)", [&id])?;
+        self.bind_upload(&id, upload.as_deref())?;
         self.event(&id, owner, "queued")?;
         let job = self.job(owner, &id)?;
         tx.commit()?;

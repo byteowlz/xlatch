@@ -1,0 +1,11 @@
+# Owned chunked file inputs
+
+Large input files use authenticated, resumable 1 MiB chunks and an immutable owner-scoped artifact reference. Signed JSON RPC keeps its existing envelope bound; raising that bound would still require entire files in client and server memory. The upload UUID is the outbox invocation ID, so network retries resume the same bytes and submit the same durable job.
+
+SQLite stores upload metadata and bounded chunk BLOBs transactionally. This avoids a separate filesystem/database commit protocol, at the cost of database growth and an executor staging copy. Aggregate reserved-byte quotas count incomplete uploads too. Retention cleanup never removes bytes referenced by queued/running jobs or an active composition parent. SQLite reuses freed pages; retention does not promise immediate filesystem shrinkage.
+
+An artifact ID is not a bearer credential. Invocation verifies its owner, completion and metadata before binding it to a job. Protected executors retrieve chunks only with a live lease for that bound job; each read rechecks grants and cancellation. Transfer progress renews the lease before execution begins. Callers cannot select executor paths.
+
+Native save actions accept references without changing their existing manifests or grants: schema validation checks the equivalent legacy file shape, while execution reads the staged bytes. Command adapters explicitly opt into `file_input: "path"` and an artifact-aware input schema. The executor adds `file.path` only after validation, and deletes the private copy after the job. Adapters must consume/copy it before returning. Existing inline adapters and their revisions remain unchanged.
+
+Clients persist large files outside their JSON outbox records, in private storage excluded from backup. A terminated share extension resumes at the next delivery opportunity; background delivery is best effort. The default has no per-file cap and a 64 GiB aggregate reservation quota with seven-day retention. Operators may change these limits through their database-owning OS identity. File transfer remains bounded by storage, retention, job timeouts and source-app access. Large output/download artifacts are separate work; result JSON keeps its existing bound.

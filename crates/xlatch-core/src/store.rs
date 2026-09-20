@@ -49,7 +49,7 @@ impl Store {
         let conn = Connection::open(dir.join("xlatch.sqlite3"))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        ensure!(version <= 8, "database was created by a newer xlatch");
+        ensure!(version <= 9, "database was created by a newer xlatch");
         conn.pragma_update(None, "foreign_keys", true)?;
         if version == 0 {
             conn.execute_batch(include_str!("../migrations/001.sql"))?;
@@ -75,6 +75,9 @@ impl Store {
         }
         if version < 8 {
             conn.execute_batch(include_str!("../migrations/008.sql"))?;
+        }
+        if version < 9 {
+            conn.execute_batch(include_str!("../migrations/009.sql"))?;
         }
         Ok(Self { conn })
     }
@@ -241,11 +244,7 @@ impl Store {
             "capability permission denied"
         );
         crate::composition_store::dependencies(&self.conn, &capability.manifest)?;
-        let validator = jsonschema::validator_for(&capability.manifest.input_schema)?;
-        ensure!(
-            validator.is_valid(input),
-            "input does not match capability schema"
-        );
+        let upload = self.validate_file_input(owner, &capability.manifest, input)?;
         if let Some(job_id) = self
             .conn
             .query_row(
@@ -270,6 +269,7 @@ impl Store {
         ensure!(queued < 1000, "job queue is full");
         let job_id = uuid::Uuid::new_v4().to_string();
         self.conn.execute("INSERT INTO jobs(id,capability_id,revision,manifest,owner,status,input,idempotency_key,created_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?7,?8)", params![job_id,id,revision,serde_json::to_string(&capability.manifest)?,owner,serde_json::to_string(&input)?,key,now()])?;
+        self.bind_upload(&job_id, upload.as_deref())?;
         self.capture_history(&job_id, owner, &capability, input)?;
         self.event(&job_id, owner, "queued")?;
         self.job(owner, &job_id)

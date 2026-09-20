@@ -182,6 +182,7 @@ pub async fn maintain(dir: std::path::PathBuf) -> Result<()> {
         {
             let store = Store::open(&dir)?;
             store.prune_history(&store.history_policy()?)?;
+            store.prune_uploads()?;
         }
         tokio::time::sleep(std::time::Duration::from_mins(1)).await;
     }

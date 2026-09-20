@@ -21,6 +21,9 @@ pub struct Manifest {
     /// Optional embedded native-client icon; absent values preserve legacy revisions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<crate::icon::Icon>,
+    /// Opt into executor-local file paths for uploaded artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_input: Option<crate::uploads::FileInput>,
     /// MIME types the share client can submit.
     pub accepts: Vec<String>,
     /// JSON Schema for invocation input.
@@ -276,6 +279,11 @@ pub enum Request {
     },
     /// List visible active capabilities (all revisions for the local operator).
     Discover,
+    /// Resumable bounded-chunk artifact transfer for an enrolled device.
+    Upload {
+        /// Upload operation.
+        request: crate::uploads::UploadRequest,
+    },
     /// Return authorized leaf actions compatible with the selected chain.
     ChainCandidates {
         /// Ordered exact revisions already selected.

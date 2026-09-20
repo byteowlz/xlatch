@@ -15,6 +15,15 @@ use serde_json::{Value, json};
 pub enum ExecutorRequest {
     /// Lease the next authorized job.
     Claim,
+    /// Stream one chunk for the currently leased job only.
+    ReadUpload {
+        /// Job identifier.
+        id: String,
+        /// Live executor lease secret.
+        lease: String,
+        /// Raw offset.
+        offset: u64,
+    },
     /// Return a result for a job leased to this executor.
     Complete {
         /// Job id.
@@ -137,6 +146,12 @@ impl Store {
 /// Returns lease, permission, schema, or persistence errors.
 pub fn dispatch(store: &mut Store, request: ExecutorRequest) -> Result<Value> {
     match request {
+        ExecutorRequest::ReadUpload { id, lease, offset } => {
+            let job = store.leased_job(&id, &lease)?;
+            let chunk = store.job_upload_chunk(&job, offset)?;
+            store.conn.execute("UPDATE executor_leases SET expires_at=?2+(SELECT json_extract(manifest,'$.timeout_seconds') FROM jobs WHERE id=?1)+30 WHERE job_id=?1",params![id,now()])?;
+            Ok(chunk)
+        }
         ExecutorRequest::Claim => {
             store.expire_executor_leases()?;
             Ok(serde_json::to_value(store.lease_work()?)?)
@@ -175,12 +190,27 @@ pub async fn run(control_dir: std::path::PathBuf, work_dir: std::path::PathBuf) 
             let outcome = match binding {
                 Err(error) => Err(error),
                 Ok(()) => {
-                    crate::execution::execute(
-                        &work_dir,
-                        &work.job,
-                        &work.manifest,
-                        cancellation(&control_dir, &work),
-                    )
+                    async {
+                        let staged = crate::uploads::stage(&work_dir, &work.job, |offset| {
+                            call(
+                                &control_dir,
+                                ExecutorRequest::ReadUpload {
+                                    id: work.job.id.clone(),
+                                    lease: work.lease.clone(),
+                                    offset,
+                                },
+                            )
+                        })
+                        .await?;
+                        crate::execution::execute(
+                            &work_dir,
+                            &work.job,
+                            &work.manifest,
+                            staged.as_ref().map(|s| s.path.as_path()),
+                            cancellation(&control_dir, &work),
+                        )
+                        .await
+                    }
                     .await
                 }
             };

@@ -97,6 +97,11 @@ fn proposal(options: &Options, catalog: &[Capability]) -> Result<Manifest> {
     let last = steps.last().context("choose at least two steps")?;
     let manifest = Manifest {
         icon: None,
+        file_input: if matches!(first.manifest.execution, Execution::SaveFile { .. }) {
+            Some(xlatch_core::uploads::FileInput::Path)
+        } else {
+            first.manifest.file_input
+        },
         id: options.id.clone(),
         title: options.title.clone().unwrap_or(plan.title),
         description: format!(

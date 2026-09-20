@@ -37,6 +37,7 @@ impl Drop for Fixture {
 fn manifest() -> Manifest {
     Manifest {
         icon: None,
+        file_input: None,
         id: "echo".into(),
         title: "Echo".into(),
         description: "Return shared text".into(),
@@ -1611,6 +1612,227 @@ fn icons_preserve_legacy_revisions_and_reject_active_svg_content() -> Result<()>
         }
         .png_bytes()
         .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn large_upload_resumes_and_saves_without_changing_legacy_manifest() -> Result<()> {
+    use xlatch_core::uploads::{CHUNK_BYTES, UploadRequest};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let destination = fixture.0.join("incoming");
+    std::fs::create_dir(&destination)?;
+    let destination = std::fs::canonicalize(destination)?;
+    let mut action = manifest();
+    action.execution = Execution::SaveFile {
+        directory: destination.to_string_lossy().into(),
+    };
+    action.input_schema = json!({"type":"object","required":["file"],"properties":{"file":{"type":"object","required":["name","mime_type","data_base64"],"properties":{"name":{"type":"string"},"mime_type":{"type":"string"},"data_base64":{"type":"string"}},"additionalProperties":false}},"additionalProperties":false});
+    let cap = store.register(&action)?;
+    store.approve("echo", &cap.revision, true)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let bytes = vec![37u8; CHUNK_BYTES * 9 + 31];
+    let begin = || UploadRequest::Begin {
+        id: id.clone(),
+        name: "recording.wav".into(),
+        mime_type: "audio/wav".into(),
+        size: bytes.len() as u64,
+    };
+    xlatch_core::uploads::dispatch(&store, "local", begin())?;
+    for (index, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+        let request = || UploadRequest::Chunk {
+            id: id.clone(),
+            offset: (index * CHUNK_BYTES) as u64,
+            data_base64: STANDARD.encode(chunk),
+        };
+        let result = xlatch_core::uploads::dispatch(&store, "local", request())?;
+        assert_eq!(
+            xlatch_core::uploads::dispatch(&store, "local", request())?,
+            result
+        );
+        drop(store);
+        store = fixture.store()?;
+        assert_eq!(
+            xlatch_core::uploads::dispatch(&store, "local", begin())?["offset"],
+            result["offset"]
+        );
+    }
+    let input = json!({"file":{"artifact_id":id,"name":"recording.wav","mime_type":"audio/wav","size":bytes.len()}});
+    let job = store.invoke("local", "echo", &cap.revision, &input, "large-file")?;
+    assert_eq!(
+        store
+            .invoke("local", "echo", &cap.revision, &input, "large-file")?
+            .id,
+        job.id
+    );
+    assert!(xlatch_core::uploads::dispatch(&store, "local", UploadRequest::Abort { id }).is_err());
+    drop(store);
+    let task = tokio::spawn(worker::run(fixture.0.clone()));
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let job = fixture.store()?.job("local", &job.id)?;
+            if !matches!(job.status.as_str(), "queued" | "running") {
+                return Ok::<_, anyhow::Error>(job);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+    task.abort();
+    let _ = task.await;
+    let result = result?;
+    assert_eq!(result.status, "succeeded", "{:?}", result.error);
+    assert_eq!(std::fs::read(destination.join("recording.wav"))?, bytes);
+    assert_eq!(
+        fixture.store()?.discover("local")?[0].revision,
+        cap.revision
+    );
+    assert!(
+        !std::fs::read_dir(&fixture.0)?
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().starts_with(".xlatch-file-"))
+    );
+    Ok(())
+}
+
+#[test]
+fn uploads_reject_other_owners_changed_chunks_and_storage_overcommit() -> Result<()> {
+    use xlatch_core::uploads::{CHUNK_BYTES, UploadPolicy, UploadRequest, dispatch};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (phone, _) = pair(&mut store, 8)?;
+    let (other, _) = pair(&mut store, 9)?;
+    store.set_upload_policy(&UploadPolicy {
+        max_file_bytes: None,
+        quota_bytes: CHUNK_BYTES as u64 * 2,
+        retention_hours: 1,
+    })?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let begin = || UploadRequest::Begin {
+        id: id.clone(),
+        name: "file.bin".into(),
+        mime_type: "application/octet-stream".into(),
+        size: CHUNK_BYTES as u64 * 2,
+    };
+    dispatch(&store, &phone, begin())?;
+    assert!(dispatch(&store, &other, begin()).is_err());
+    assert!(
+        dispatch(
+            &store,
+            &phone,
+            UploadRequest::Begin {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "other.bin".into(),
+                mime_type: "application/octet-stream".into(),
+                size: 1
+            }
+        )
+        .is_err()
+    );
+    let chunk = |offset, byte| UploadRequest::Chunk {
+        id: id.clone(),
+        offset,
+        data_base64: STANDARD.encode(vec![byte; CHUNK_BYTES]),
+    };
+    assert!(dispatch(&store, &phone, chunk(CHUNK_BYTES as u64, 42)).is_err());
+    assert!(dispatch(&store, &other, chunk(0, 42)).is_err());
+    dispatch(&store, &phone, chunk(0, 42))?;
+    assert!(dispatch(&store, &phone, chunk(0, 43)).is_err());
+    dispatch(&store, &phone, chunk(CHUNK_BYTES as u64, 43))?;
+    let mut action = manifest();
+    action.file_input = Some(xlatch_core::uploads::FileInput::Path);
+    action.input_schema = json!({"type":"object"});
+    let cap = store.register(&action)?;
+    store.approve("echo", &cap.revision, false)?;
+    store.grant(&phone, "echo", &cap.revision)?;
+    store.grant(&other, "echo", &cap.revision)?;
+    let input = json!({"file":{"artifact_id":id,"name":"file.bin","mime_type":"application/octet-stream","size":CHUNK_BYTES * 2}});
+    assert!(
+        store
+            .invoke(&other, "echo", &cap.revision, &input, "stolen")
+            .is_err()
+    );
+    assert!(
+        store
+            .invoke(
+                &phone,
+                "echo",
+                &cap.revision,
+                &json!({"file":{"path":"/etc/passwd"}}),
+                "injected"
+            )
+            .is_err()
+    );
+    store.revoke(&phone)?;
+    assert!(service::dispatch(&mut store, &phone, Request::Upload { request: begin() }).is_err());
+    Ok(())
+}
+
+#[test]
+fn protected_upload_reads_require_live_job_lease_and_preserve_active_bytes() -> Result<()> {
+    use xlatch_core::{
+        executor::{self, ExecutorRequest, Work},
+        uploads::{self, FileInput, UploadRequest},
+    };
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let mut action = manifest();
+    action.file_input = Some(FileInput::Path);
+    action.input_schema = json!({"type":"object"});
+    let cap = store.register(&action)?;
+    store.approve("echo", &cap.revision, false)?;
+    let (phone, _) = pair(&mut store, 11)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    uploads::dispatch(
+        &store,
+        &phone,
+        UploadRequest::Begin {
+            id: id.clone(),
+            name: "a.bin".into(),
+            mime_type: "application/octet-stream".into(),
+            size: 3,
+        },
+    )?;
+    uploads::dispatch(
+        &store,
+        &phone,
+        UploadRequest::Chunk {
+            id: id.clone(),
+            offset: 0,
+            data_base64: STANDARD.encode(b"abc"),
+        },
+    )?;
+    let job = store.invoke(&phone,"echo",&cap.revision,&json!({"file":{"artifact_id":id,"name":"a.bin","mime_type":"application/octet-stream","size":3}}),"upload-lease")?;
+    let work: Work =
+        serde_json::from_value(executor::dispatch(&mut store, ExecutorRequest::Claim)?)?;
+    let read = |lease: String| ExecutorRequest::ReadUpload {
+        id: job.id.clone(),
+        lease,
+        offset: 0,
+    };
+    assert!(executor::dispatch(&mut store, read("0".repeat(64))).is_err());
+    assert_eq!(
+        executor::dispatch(&mut store, read(work.lease.clone()))?,
+        json!({"data_base64":STANDARD.encode(b"abc")})
+    );
+    let db = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+    db.execute("UPDATE uploads SET expires=0", [])?;
+    store.prune_uploads()?;
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM upload_chunks", [], |r| r
+            .get::<_, i64>(0))?,
+        1
+    );
+    store.revoke(&phone)?;
+    assert!(executor::dispatch(&mut store, read(work.lease)).is_err());
+    store.prune_uploads()?;
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM upload_chunks", [], |r| r
+            .get::<_, i64>(0))?,
+        0
     );
     Ok(())
 }
