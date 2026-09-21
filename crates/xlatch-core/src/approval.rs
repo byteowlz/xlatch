@@ -77,7 +77,7 @@ pub fn decision_bytes(payload: &str, approve: bool) -> Vec<u8> {
 }
 
 fn targets(conn: &Connection) -> Result<Vec<GrantTarget>> {
-    let mut stmt = conn.prepare("SELECT id,name,public_key FROM devices WHERE revoked=0 AND enrollment_status='active' ORDER BY id")?;
+    let mut stmt = conn.prepare("SELECT id,COALESCE(alias,name),public_key FROM devices WHERE revoked=0 AND enrollment_status='active' ORDER BY id")?;
     Ok(stmt
         .query_map([], |r| {
             Ok(GrantTarget {
@@ -220,7 +220,7 @@ fn activate(conn: &Connection, review: &ApprovalReview) -> Result<()> {
         params![review.manifest.id, review.revision],
     )?;
     for target in &review.devices {
-        let active: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM devices WHERE id=?1 AND public_key=?2 AND name=?3 AND revoked=0 AND enrollment_status='active')", params![target.id,target.public_key,target.name], |r| r.get(0))?;
+        let active: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM devices WHERE id=?1 AND public_key=?2 AND COALESCE(alias,name)=?3 AND revoked=0 AND enrollment_status='active')", params![target.id,target.public_key,target.name], |r| r.get(0))?;
         ensure!(active, "grant target changed; review again");
         conn.execute("INSERT INTO grants(device_id,capability_id,revision) VALUES(?1,?2,?3) ON CONFLICT(device_id,capability_id) DO UPDATE SET revision=excluded.revision", params![target.id,review.manifest.id,review.revision])?;
     }

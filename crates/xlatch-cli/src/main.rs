@@ -40,6 +40,16 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+enum DeviceCommand {
+    /// List devices, including aliases and revoked records.
+    List,
+    /// Set a display alias; omit the alias to restore the enrollment name.
+    Alias { id: String, alias: Option<String> },
+    /// Revoke access and cancel unfinished jobs, preserving history.
+    Remove { id: String },
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Inspect upload limits, or apply a JSON policy file (trusted operator).
     Uploads {
@@ -118,6 +128,11 @@ enum Command {
         id: String,
         #[arg(long)]
         revision: String,
+    },
+    /// Manage paired devices by their stable ID.
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
     },
     /// List paired devices.
     Devices,
@@ -205,6 +220,7 @@ async fn main() -> Result<()> {
             id,
             revision,
         },
+        Command::Device { command } => device_control(command),
         Command::Devices => Control::Devices,
         Command::Revoke { id } => Control::Revoke { id },
         Command::List => Control::Rpc {
@@ -307,4 +323,18 @@ fn uploads_policy(dir: &std::path::Path, path: Option<&std::path::Path>) -> Resu
     }
     println!("{}", serde_json::to_string_pretty(&store.upload_policy()?)?);
     Ok(())
+}
+
+fn device_control(command: DeviceCommand) -> Control {
+    match command {
+        DeviceCommand::List => Control::Devices,
+        DeviceCommand::Alias { id, alias } => Control::DeviceChange {
+            id,
+            change: xlatch_core::device_management::Change::Alias { alias },
+        },
+        DeviceCommand::Remove { id } => Control::DeviceChange {
+            id,
+            change: xlatch_core::device_management::Change::Remove,
+        },
+    }
 }

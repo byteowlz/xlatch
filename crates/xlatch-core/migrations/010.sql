@@ -1,0 +1,5 @@
+BEGIN IMMEDIATE;
+ALTER TABLE devices ADD COLUMN alias TEXT;
+CREATE TABLE device_reviews(id TEXT PRIMARY KEY,payload TEXT NOT NULL,expires_at INTEGER NOT NULL);
+PRAGMA user_version=10;
+COMMIT;

@@ -71,6 +71,8 @@ pub struct Device {
     pub id: String,
     /// Name selected on enrollment.
     pub name: String,
+    /// Operator-selected display label; never an identity credential.
+    pub alias: Option<String>,
     /// Whether access has been revoked.
     pub revoked: bool,
     /// Active or pending; pending devices cannot invoke capabilities.
@@ -212,6 +214,7 @@ impl Store {
         let device = Device {
             id: uuid::Uuid::new_v4().to_string(),
             name: request.name,
+            alias: None,
             revoked: false,
             enrollment_status: if guarded { "pending" } else { "active" }.into(),
         };
@@ -288,7 +291,7 @@ impl Store {
     pub fn devices(&self) -> Result<Vec<Device>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id,name,revoked,enrollment_status FROM devices ORDER BY name")?;
+            .prepare("SELECT id,name,revoked,enrollment_status,alias FROM devices ORDER BY COALESCE(alias,name),id")?;
         Ok(stmt
             .query_map([], |r| {
                 Ok(Device {
@@ -296,6 +299,7 @@ impl Store {
                     name: r.get(1)?,
                     revoked: r.get(2)?,
                     enrollment_status: r.get(3)?,
+                    alias: r.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?)

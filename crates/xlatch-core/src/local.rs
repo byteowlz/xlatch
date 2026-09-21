@@ -55,6 +55,13 @@ pub enum Control {
         /// Exact capability ids to grant.
         capabilities: Vec<String>,
     },
+    /// Change a device locally, or submit a protected review.
+    DeviceChange {
+        /// Stable device identifier.
+        id: String,
+        /// Exact requested change.
+        change: crate::device_management::Change,
+    },
     /// List enrolled devices.
     Devices,
     /// Revoke a device and cancel outstanding work.
@@ -182,6 +189,9 @@ async fn handle(
                 store.grant(&device, &id, &revision)?;
                 Ok(json!({"device":device,"capability":id,"revision":revision,"granted":true}))
             }
+            Control::DeviceChange { id, change } => {
+                store.change_device_local(&id, change, protected)
+            }
             Control::Devices => Ok(serde_json::to_value(store.devices()?)?),
             Control::Revoke { id } => {
                 store.revoke(&id)?;
@@ -249,6 +259,7 @@ pub fn authorize_control(control: &Control, protected: bool) -> Result<()> {
                 | Control::Executor { .. }
                 | Control::Register { .. }
                 | Control::Pair { .. }
+                | Control::DeviceChange { .. }
                 | Control::Devices
                 | Control::Rpc {
                     request: Request::Discover

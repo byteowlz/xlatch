@@ -1855,3 +1855,179 @@ fn protected_upload_reads_require_live_job_lease_and_preserve_active_bytes() -> 
     );
     Ok(())
 }
+
+#[test]
+fn device_aliases_and_signed_removal_preserve_identity_and_cancel_jobs() -> Result<()> {
+    use xlatch_core::device_management::{Change, DeviceRequest, decision_bytes, dispatch};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (phone, _) = pair(&mut store, 110)?;
+    let (target, _) = pair(&mut store, 111)?;
+    let key = enable_guard(&mut store, &phone)?;
+    let job = store.invoke(
+        &target,
+        "echo",
+        &cap.revision,
+        &json!({"text":"queued"}),
+        "remove-device",
+    )?;
+    let original = store
+        .devices()?
+        .into_iter()
+        .find(|d| d.id == target)
+        .context("device")?
+        .name;
+    store.change_device_local(
+        &target,
+        Change::Alias {
+            alias: Some("MacBook".into()),
+        },
+        false,
+    )?;
+    let device = store
+        .devices()?
+        .into_iter()
+        .find(|d| d.id == target)
+        .context("device")?;
+    assert_eq!(
+        (device.name, device.alias),
+        (original, Some("MacBook".into()))
+    );
+    assert!(dispatch(&mut store, &target, DeviceRequest::List).is_err());
+    assert!(
+        store
+            .change_device_local(
+                &target,
+                Change::Alias {
+                    alias: Some("\n".into())
+                },
+                false
+            )
+            .is_err()
+    );
+    let queued = store.change_device_local(&target, Change::Remove, true)?;
+    assert_eq!(queued["pending"], true);
+    assert!(
+        !store
+            .devices()?
+            .into_iter()
+            .find(|d| d.id == target)
+            .context("device")?
+            .revoked
+    );
+    let payload = queued["payload"].as_str().context("review")?;
+    let review: serde_json::Value = serde_json::from_str(payload)?;
+    let id = review["id"].as_str().context("review id")?.to_owned();
+    let signature: p256::ecdsa::Signature = key.sign(&decision_bytes(payload, true));
+    let request = DeviceRequest::Decide {
+        id,
+        approve: true,
+        signature: STANDARD.encode(signature.to_der().as_bytes()),
+    };
+    let mut forged = request.clone();
+    if let DeviceRequest::Decide { approve, .. } = &mut forged {
+        *approve = false;
+    }
+    assert!(dispatch(&mut store, &phone, forged).is_err());
+    dispatch(&mut store, &phone, request.clone())?;
+    assert!(dispatch(&mut store, &phone, request).is_err());
+    assert!(
+        store
+            .devices()?
+            .into_iter()
+            .find(|d| d.id == target)
+            .context("device")?
+            .revoked
+    );
+    assert_eq!(store.job(&target, &job.id)?.status, "cancelled");
+    assert!(
+        store
+            .change_device_local(&phone, Change::Remove, false)
+            .is_err()
+    );
+    let payload = dispatch(
+        &mut store,
+        &phone,
+        DeviceRequest::Prepare {
+            id: phone.clone(),
+            change: Change::Remove,
+        },
+    )?;
+    let payload = payload.as_str().context("self review")?;
+    let review: serde_json::Value = serde_json::from_str(payload)?;
+    let signature: p256::ecdsa::Signature = key.sign(&decision_bytes(payload, true));
+    assert!(
+        dispatch(
+            &mut store,
+            &phone,
+            DeviceRequest::Decide {
+                id: review["id"].as_str().context("id")?.into(),
+                approve: true,
+                signature: STANDARD.encode(signature.to_der().as_bytes())
+            }
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_or_expired_device_reviews_cannot_be_applied() -> Result<()> {
+    use xlatch_core::device_management::{Change, DeviceRequest, decision_bytes, dispatch};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let cap = store.register(&manifest())?;
+    store.approve("echo", &cap.revision, false)?;
+    let (phone, _) = pair(&mut store, 112)?;
+    let key = enable_guard(&mut store, &phone)?;
+    for expired in [false, true] {
+        let queued = store.change_device_local(
+            &phone,
+            Change::Alias {
+                alias: Some("Reviewed".into()),
+            },
+            true,
+        )?;
+        let payload = queued["payload"].as_str().context("payload")?;
+        let review: serde_json::Value = serde_json::from_str(payload)?;
+        let id = review["id"].as_str().context("id")?;
+        if expired {
+            let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
+            conn.execute("UPDATE device_reviews SET expires_at=0 WHERE id=?1", [id])?;
+        } else {
+            store.change_device_local(
+                &phone,
+                Change::Alias {
+                    alias: Some("Newer name".into()),
+                },
+                false,
+            )?;
+        }
+        let sig: p256::ecdsa::Signature = key.sign(&decision_bytes(payload, true));
+        assert!(
+            dispatch(
+                &mut store,
+                &phone,
+                DeviceRequest::Decide {
+                    id: id.into(),
+                    approve: true,
+                    signature: STANDARD.encode(sig.to_der().as_bytes())
+                }
+            )
+            .is_err()
+        );
+    }
+    store.change_device_local(&phone, Change::Alias { alias: None }, false)?;
+    assert_eq!(
+        store
+            .devices()?
+            .into_iter()
+            .find(|d| d.id == phone)
+            .context("phone")?
+            .alias,
+        None
+    );
+    Ok(())
+}

@@ -52,6 +52,8 @@ pub mod history;
 #[cfg(unix)]
 pub mod host_trust;
 
+/// Device labels and signed removal reviews.
+pub mod device_management;
 pub mod recovery;
 
 pub mod chain;

@@ -16,6 +16,11 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnrollmentRequest {
+    /// Manage devices through separately signed reviews.
+    Devices {
+        /// Device management operation.
+        request: crate::device_management::DeviceRequest,
+    },
     /// Manage backup approvers using a separately signed review.
     Recovery {
         /// Recovery operation.
@@ -371,6 +376,9 @@ pub fn dispatch(store: &mut Store, owner: &str, request: EnrollmentRequest) -> R
         "enrollment approval requires an authenticated phone"
     );
     match request {
+        EnrollmentRequest::Devices { request } => {
+            crate::device_management::dispatch(store, owner, request)
+        }
         EnrollmentRequest::Recovery { request } => crate::recovery::dispatch(store, owner, request),
         EnrollmentRequest::Status => store.enrollment_status(owner),
         EnrollmentRequest::Enable {
