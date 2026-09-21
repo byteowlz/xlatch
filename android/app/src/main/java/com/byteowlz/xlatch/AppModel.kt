@@ -40,6 +40,9 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var catalog by mutableStateOf<JSONObject?>(null)
         private set
 
+    var deviceStatus by mutableStateOf<JSONObject?>(null)
+        private set
+
     var pending by mutableStateOf<List<String>>(emptyList())
         private set
 
@@ -106,6 +109,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                     .map { it.getJSONObject("manifest").getString("id") }
                     .toSet()
             }
+        deviceStatus = null
         catalog = null
         pending = emptyList()
         jobs =
@@ -113,6 +117,10 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 (api.rpc(server, JSONObject().put("op", "jobs")) as JSONArray).objects()
             }
         if (enrollment?.optBoolean("is_approver") == true) {
+            deviceStatus = withContext(Dispatchers.IO) {
+                api.rpc(server, deviceOperation(JSONObject().put("action", "list"))) as JSONObject
+            }
+
             catalog =
                 withContext(Dispatchers.IO) {
                     api.rpc(server, operation("approval", "catalog")) as JSONObject
@@ -133,6 +141,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         actions = emptyList()
         jobs = emptyList()
         enrollment = null
+        deviceStatus = null
         catalog = null
         pending = emptyList()
         refreshData(true)
@@ -251,6 +260,26 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         review = Review(server, "capability", payload)
     }
 
+    private fun deviceOperation(request: JSONObject): JSONObject =
+        operation("enrollment", "devices").also { it.getJSONObject("request").put("request", request) }
+
+    fun reviewDevice(payload: String) {
+        try {
+            val server = selected ?: return
+            val json = JSONObject(payload)
+            validateReview(json, server, "device")
+            require(json.getJSONObject("change").getString("kind") in listOf("alias", "remove"))
+            review = Review(server, "device", payload)
+        } catch (failure: Exception) { error = failure.message }
+    }
+
+    fun prepareDevice(id: String, change: JSONObject) = task {
+        val server = selected ?: return@task
+        val request = JSONObject().put("action", "prepare").put("id", id).put("change", change)
+        val payload = withContext(Dispatchers.IO) { api.rpc(server, deviceOperation(request)) as String }
+        reviewDevice(payload)
+    }
+
     fun reviewEnrollment(payload: String) {
         try {
             val server = selected ?: return
@@ -264,7 +293,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private fun validateReview(json: JSONObject, server: Server, kind: String) {
         require(
             json.getString("server_id") == enrollment?.getString("server_id") &&
-                json.getInt("policy_version") == 1 &&
+                (kind == "device" || json.getInt("policy_version") == 1) &&
                 json.getLong("expires_at") > System.currentTimeMillis() / 1000
         ) {
             "Review identity or expiry is invalid"
@@ -299,12 +328,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                             .put(
                                 "id",
                                 json.getString(
-                                    if (current.kind == "capability") "id" else "device_id"
+                                    if (current.kind == "enrollment") "device_id" else "id"
                                 ),
                             )
                             .put("approve", approve)
                             .put("signature", signed)
-                        withContext(Dispatchers.IO) { api.rpc(current.server, request) }
+                        withContext(Dispatchers.IO) { api.rpc(current.server, if (current.kind == "device") deviceOperation(request.getJSONObject("request")) else request) }
                         refreshData(true)
                     }
                 }

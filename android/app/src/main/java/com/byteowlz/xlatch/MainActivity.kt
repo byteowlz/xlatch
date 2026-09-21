@@ -420,6 +420,18 @@ private fun AppScreen(model: AppModel, activity: MainActivity) {
                                 )
                             }
                         }
+                        if (model.enrollment?.optBoolean("is_approver") == true) {
+                            item { Text("Devices & aliases", style = MaterialTheme.typography.titleLarge) }
+                            items(model.deviceStatus?.optJSONArray("devices")?.objects().orEmpty().filter { !it.optBoolean("revoked") }, key = { it.getString("id") }) { device ->
+                                DeviceManagementRow(device, model)
+                            }
+                            items(model.deviceStatus?.optJSONArray("pending")?.strings().orEmpty()) { payload ->
+                                val change = JSONObject(payload)
+                                TextButton(onClick = { model.reviewDevice(payload) }, enabled = !model.busy) {
+                                    Text("Review ${change.getJSONObject("change").getString("kind")}: ${change.optString("alias").takeUnless { it == "null" || it.isBlank() } ?: change.getString("name")}")
+                                }
+                            }
+                        }
                         items(model.pending) { payload ->
                             TextButton(
                                 onClick = { model.reviewEnrollment(payload) },
@@ -544,6 +556,12 @@ private fun AppScreen(model: AppModel, activity: MainActivity) {
             title = { Text("Review ${review.kind}") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (review.kind == "device") {
+                        val details = JSONObject(review.payload)
+                        val change = details.getJSONObject("change")
+                        Text(details.optString("alias").takeUnless { it == "null" || it.isBlank() } ?: details.getString("name"))
+                        Text(if (change.getString("kind") == "remove") "Revoke access and cancel unfinished jobs. History is retained." else "New alias: ${change.optString("alias").takeUnless { it == "null" } ?: "Use enrollment name"}")
+                    }
                     Text(
                         "Compare code: ${sha256(review.payload.toByteArray()).take(12).uppercase()}"
                     )
@@ -644,4 +662,20 @@ private fun ActionIcon(manifest: JSONObject) {
     }
     if (bitmap != null) Image(bitmap, contentDescription = null, modifier = Modifier.size(32.dp))
     else Icon(Icons.Outlined.Bolt, contentDescription = null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+}
+
+@Composable
+private fun DeviceManagementRow(device: JSONObject, model: AppModel) {
+    val id = device.getString("id")
+    val initialAlias = device.optString("alias").takeUnless { it == "null" }.orEmpty()
+    var alias by remember(id, initialAlias) { mutableStateOf(initialAlias) }
+    Column(Modifier.fillMaxWidth()) {
+        Text(initialAlias.ifEmpty { device.getString("name") }, style = MaterialTheme.typography.titleMedium)
+        Text("${device.getString("name")} · $id", style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text("Custom alias") }, singleLine = true)
+        Row {
+            TextButton(onClick = { model.prepareDevice(id, JSONObject().put("kind", "alias").put("alias", alias.ifEmpty { null } ?: JSONObject.NULL)) }, enabled = !model.busy) { Text("Review alias") }
+            TextButton(onClick = { model.prepareDevice(id, JSONObject().put("kind", "remove")) }, enabled = !model.busy && id != model.selected?.device) { Text("Review removal") }
+        }
+    }
 }

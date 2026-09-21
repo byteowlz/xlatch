@@ -484,6 +484,7 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("Shortcuts & Back Tap") { ShortcutSettingsView() }
                     NavigationLink("Device approvals") { EnrollmentSettingsView() }
+                    if model.enrollmentStatus?.is_approver == true { NavigationLink("Devices & aliases") { DeviceManagementView() } }
                     NavigationLink("Action approvals & access") { CapabilityApprovalListView() }
                     NavigationLink("Update server identity") { ServerIdentityUpdateView() }
                 }

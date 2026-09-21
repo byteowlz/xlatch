@@ -26,6 +26,14 @@ final class EnrollmentTests: XCTestCase {
         XCTAssertThrowsError(try PendingApprover(raw, serverID: "another-server"))
         XCTAssertThrowsError(try PendingApprover(raw.replacingOccurrences(of: "add", with: "unknown"), serverID: "server"))
     }
+    func testDeviceReviewBindsServerChangeAndExactBytes() throws {
+        let raw = #"{"id":"review","server_id":"server","device_id":"device","name":"Phone","alias":null,"public_key":"key","change":{"kind":"alias","alias":"MacBook"},"expires_at":1}"#
+        let pending = try PendingDeviceChange(raw, server: "server")
+        XCTAssertEqual(String(data: pending.signingBytes(approve: true), encoding: .utf8), "xlatch.device.decision.v1\napprove\n" + raw)
+        XCTAssertNotEqual(pending.signingBytes(approve: true), pending.signingBytes(approve: false))
+        XCTAssertThrowsError(try PendingDeviceChange(raw, server: "other"))
+        XCTAssertThrowsError(try PendingDeviceChange(raw.replacingOccurrences(of: "\"kind\":\"alias\"", with: "\"kind\":\"promote\""), server: "server"))
+    }
     func testSimulatorCannotCreateApprovalKey() async throws {
         guard !ApprovalKey.deviceSupportsApprovals else { throw XCTSkip("Physical device approval needs deliberate user interaction.") }
         let connection = Connection(url: "https://localhost", pin: "pin", deviceID: "test", privateKey: Data())

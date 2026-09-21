@@ -159,6 +159,7 @@ struct EnrollmentSettingsView: View {
                     }
                 }
                 if status.is_approver, let connection = model.connection {
+                    Section { NavigationLink("Devices & aliases") { DeviceManagementView() } }
                     Section("Protected installation") {
                         Button("Verify installation fingerprint") {
                             busy = true; error = nil
@@ -313,5 +314,184 @@ struct ApprovalBootstrap: Decodable {
             throw ClientError.message("Setup code is expired or belongs to another phone or server.")
         }
         return token
+    }
+}
+
+struct ManagedDevice: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let alias: String?
+    let revoked: Bool
+    let enrollment_status: String
+    var label: String { alias ?? name }
+}
+struct DeviceChange: Codable {
+    let kind: String
+    let alias: String?
+}
+struct DeviceChangeReview: Decodable, Identifiable {
+    let id: String
+    let server_id: String
+    let device_id: String
+    let name: String
+    let alias: String?
+    let public_key: String
+    let change: DeviceChange
+    let expires_at: Int64
+}
+struct PendingDeviceChange: Identifiable {
+    let payload: String
+    let review: DeviceChangeReview
+    var id: String { review.id }
+    init(_ payload: String, server: String) throws {
+        review = try JSONDecoder().decode(DeviceChangeReview.self, from: Data(payload.utf8))
+        guard review.server_id == server, ["alias", "remove"].contains(review.change.kind) else {
+            throw ClientError.message("Unsupported device review or different server identity.")
+        }
+        self.payload = payload
+    }
+    func signingBytes(approve: Bool) -> Data {
+        Data("xlatch.device.decision.v1\n\(approve ? "approve" : "reject")\n\(payload)".utf8)
+    }
+}
+struct DeviceManagementStatus: Decodable {
+    let devices: [ManagedDevice]
+    let pending: [String]
+}
+
+struct DeviceManagementView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var devices: [ManagedDevice] = []
+    @State private var pending: [PendingDeviceChange] = []
+    @State private var error: String?
+    var body: some View {
+        List {
+            Section("Pending changes") {
+                if pending.isEmpty { Text("No pending device changes").foregroundStyle(.secondary) }
+                ForEach(pending) { item in
+                    NavigationLink { DeviceChangeReviewView(pending: item) } label: {
+                        VStack(alignment: .leading) {
+                            Text(item.review.change.kind == "remove" ? "Remove \(item.review.alias ?? item.review.name)" : "Rename \(item.review.alias ?? item.review.name)")
+                            Text(item.review.device_id).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Section("Connected devices") {
+                ForEach(devices.filter { !$0.revoked }) { device in
+                    NavigationLink { ManagedDeviceView(device: device) } label: {
+                        VStack(alignment: .leading) {
+                            Text(device.label)
+                            Text(device.id == model.connection?.deviceID ? "This device" : device.enrollment_status.capitalized).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Section { Text("Aliases are shared across clients of this server. Removing a device revokes access and cancels unfinished jobs; its history remains.").font(.footnote).foregroundStyle(.secondary) }
+            if let error { Text(error).foregroundStyle(.red) }
+        }
+        .navigationTitle("Devices")
+        .refreshable { await refresh() }
+        .task {
+            while !Task.isCancelled {
+                await refresh()
+                do { try await Task.sleep(for: .seconds(5)) } catch { break }
+            }
+        }
+    }
+    private func refresh() async {
+        do {
+            guard let server = model.enrollmentStatus?.server_id else { return }
+            let status: DeviceManagementStatus = try await model.client().rpc(["op":"enrollment", "request":["action":"devices", "request":["action":"list"]]])
+            pending = try status.pending.map { try PendingDeviceChange($0, server: server) }
+            devices = status.devices
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+}
+struct ManagedDeviceView: View {
+    @EnvironmentObject var model: AppModel
+    let device: ManagedDevice
+    @State private var alias = ""
+    @State private var pending: PendingDeviceChange?
+    @State private var busy = false
+    @State private var error: String?
+    var body: some View {
+        Form {
+            Section("Identity") {
+                LabeledContent("Enrollment name", value: device.name)
+                Text(device.id).font(.caption.monospaced()).textSelection(.enabled)
+            }
+            Section("Custom alias") {
+                TextField("Use enrollment name", text: $alias).textInputAutocapitalization(.words)
+                Button("Review alias change") { prepare(["kind":"alias", "alias":alias.isEmpty ? NSNull() : alias as Any]) }.disabled(busy)
+            }
+            Section {
+                Button("Review device removal", role: .destructive) { prepare(["kind":"remove"]) }.disabled(busy || device.id == model.connection?.deviceID)
+                Text("An approver must be removed by another approver. You cannot remove this approver from itself.").font(.footnote).foregroundStyle(.secondary)
+            }
+            if let pending { NavigationLink("Review and approve") { DeviceChangeReviewView(pending: pending) } }
+            if let error { Text(error).foregroundStyle(.red) }
+        }
+        .navigationTitle(device.label)
+        .onAppear { alias = device.alias ?? "" }
+    }
+    private func prepare(_ change: [String: Any]) {
+        busy = true; error = nil; pending = nil
+        Task {
+            defer { busy = false }
+            do {
+                guard let server = model.enrollmentStatus?.server_id else { return }
+                let payload: String = try await model.client().rpc(["op":"enrollment", "request":["action":"devices", "request":["action":"prepare", "id":device.id, "change":change]]])
+                pending = try PendingDeviceChange(payload, server: server)
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+struct DeviceChangeReviewView: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let pending: PendingDeviceChange
+    @State private var busy = false
+    @State private var error: String?
+    var body: some View {
+        Form {
+            Section("Device") {
+                Text(pending.review.alias ?? pending.review.name)
+                LabeledContent("Enrollment name", value: pending.review.name)
+                Text(pending.review.device_id).font(.caption.monospaced()).textSelection(.enabled)
+                Text(pending.review.public_key).font(.caption2.monospaced()).textSelection(.enabled)
+            }
+            Section("Requested change") {
+                if pending.review.change.kind == "remove" {
+                    Text("Revoke access and cancel unfinished jobs. History will be retained.")
+                } else {
+                    LabeledContent("New alias", value: pending.review.change.alias ?? "Use enrollment name")
+                }
+                Text("Expires \(Date(timeIntervalSince1970: TimeInterval(pending.review.expires_at)).formatted())").font(.footnote)
+            }
+            Section {
+                Button("Approve with Face ID or Touch ID") { decide(true) }.disabled(busy)
+                Button("Reject change", role: .destructive) { decide(false) }.disabled(busy)
+                if let error { Text(error).foregroundStyle(.red) }
+            }
+        }.navigationTitle("Review device change")
+    }
+    private func decide(_ approve: Bool) {
+        guard let connection = model.connection else { return }
+        busy = true; error = nil
+        Task {
+            defer { busy = false }
+            do {
+                guard pending.review.server_id == model.enrollmentStatus?.server_id,
+                      pending.review.expires_at >= Int64(Date().timeIntervalSince1970) else {
+                    throw ClientError.message("Review expired or belongs to another server. Prepare it again.")
+                }
+                let bytes = pending.signingBytes(approve: approve)
+                let signature = try await ApprovalKey.signBytes(connection: connection, bytes: bytes, reason: "Review a device change in xlatch")
+                let _: JSONValue = try await model.client().rpc(["op":"enrollment", "request":["action":"devices", "request":["action":"decide", "id":pending.id, "approve":approve, "signature":signature]]])
+                await model.refresh(); dismiss()
+            } catch { self.error = error.localizedDescription }
+        }
     }
 }
