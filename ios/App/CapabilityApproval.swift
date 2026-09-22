@@ -59,7 +59,8 @@ struct CapabilityApprovalListView: View {
                     Text(error).foregroundStyle(.red)
                     Button("Try again") { Task { await refresh() } }
                 }
-            } else if let catalog {
+            }
+            if let catalog {
                 Section("Awaiting approval") {
                     let pending = catalog.capabilities.filter { $0.status != "active" }
                     if pending.isEmpty { Text("No actions awaiting approval").foregroundStyle(.secondary) }
@@ -99,11 +100,15 @@ struct CapabilityApprovalListView: View {
     }
     private func refresh() async {
         guard !loading else { return }
-        loading = true; error = nil; catalog = nil
+        // Keep navigation destinations and their consent state mounted during refresh.
+        loading = true; error = nil
         defer { loading = false }
         do {
             let client = try model.client()
-            guard try await model.refreshEnrollment(using: client), model.enrollmentStatus?.is_approver == true else { return }
+            guard try await model.refreshEnrollment(using: client), model.enrollmentStatus?.is_approver == true else {
+                catalog = nil
+                return
+            }
             catalog = try await client.rpc(["op": "approval", "request": ["action": "catalog"]])
         } catch { self.error = error.localizedDescription }
     }
