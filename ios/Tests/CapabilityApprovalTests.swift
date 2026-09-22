@@ -35,6 +35,21 @@ final class CapabilityApprovalTests: XCTestCase {
         XCTAssertEqual(job.steps?.first?.job_id, "child")
         XCTAssertEqual(job.steps?.first?.status, "succeeded")
     }
+    func testQuickApprovalRequiresTheDisplayedManifestRevisionAndRecipients() throws {
+        let raw = payload().replacingOccurrences(of: "\"expires_at\":1", with: "\"expires_at\":4102444800")
+        let pending = try PendingCapabilityApproval(raw, connection: connection)
+        let action = ApprovalAction(manifest: pending.review.manifest, revision: pending.review.revision, status: "pending")
+        try pending.validate(action: action, targets: pending.review.devices)
+        XCTAssertThrowsError(try pending.validate(action: action, targets: []))
+        let changedKey = ApprovalTarget(id: "phone", name: "Phone", public_key: "different-key")
+        XCTAssertThrowsError(try pending.validate(action: action, targets: [changedKey]))
+        let changedRevision = ApprovalAction(manifest: action.manifest, revision: String(repeating: "c", count: 64), status: "pending")
+        XCTAssertThrowsError(try pending.validate(action: changedRevision, targets: pending.review.devices))
+        let changed = try PendingCapabilityApproval(raw.replacingOccurrences(of: "one-session", with: "other-session"), connection: connection)
+        XCTAssertThrowsError(try changed.validate(action: action, targets: pending.review.devices))
+        let expired = try PendingCapabilityApproval(payload(), connection: connection)
+        XCTAssertThrowsError(try expired.validate(action: action, targets: pending.review.devices))
+    }
     func testCapabilityReviewRejectsWrongContextAndUnknownExecution() {
         for (old, new) in [("\"server\"", "\"different-server\""), ("\"approver\"", "\"another-device\""), ("\"policy_version\":1", "\"policy_version\":2"), ("\"kind\":\"command\"", "\"kind\":\"unknown\"")] {
             XCTAssertThrowsError(try PendingCapabilityApproval(payload().replacingOccurrences(of: old, with: new), connection: connection))

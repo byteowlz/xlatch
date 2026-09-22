@@ -1,14 +1,14 @@
 import SwiftUI
 import CryptoKit
 
-struct ApprovalTarget: Decodable, Identifiable {
+struct ApprovalTarget: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
     let public_key: String
 }
 
 struct ApprovalCatalog: Decodable {
-    let capabilities: [Capability]
+    let capabilities: [ApprovalAction]
     let devices: [ApprovalTarget]
 }
 
@@ -45,38 +45,91 @@ struct PendingCapabilityApproval {
     }
 }
 
+struct ApprovalAction: Decodable, Identifiable {
+    let manifest: JSONValue
+    let revision: String
+    let status: String
+    var id: String { manifest["id"]?.text ?? "" }
+    var title: String { manifest["title"]?.text ?? id }
+    var description: String { manifest["description"]?.text ?? "" }
+    var icon: ActionIcon? {
+        guard let value = manifest["icon"], let data = try? JSONEncoder().encode(value) else { return nil }
+        return try? JSONDecoder().decode(ActionIcon.self, from: data)
+    }
+    var scope: String {
+        switch manifest["execution"]?["kind"]?.text {
+        case "command": "Runs a command on your server"
+        case "compose": "Runs a sequence of server actions"
+        case "save_file": "Saves shared content on your server"
+        default: "Processes shared content on your server"
+        }
+    }
+}
+
+extension PendingCapabilityApproval {
+    func validate(action: ApprovalAction, targets: [ApprovalTarget]) throws {
+        guard !review.expired, review.manifest == action.manifest,
+              review.revision == action.revision,
+              review.devices.sorted(by: { $0.id < $1.id }) == targets.sorted(by: { $0.id < $1.id }) else {
+            throw ClientError.message("The action or device access changed. Refresh and approve again.")
+        }
+    }
+}
+
+@MainActor final class CapabilityApprovalController: ObservableObject {
+    @Published var busy = false
+    @Published var workingID: String?
+    @Published var error: String?
+    @Published var success: String?
+    @Published var completed = Set<String>()
+
+    func approve(_ action: ApprovalAction, targets: [ApprovalTarget], connection: Connection) async {
+        guard !busy else { return }
+        busy = true; workingID = action.id; error = nil; success = nil
+        defer { busy = false; workingID = nil }
+        do {
+            let client = try APIClient(connection: connection)
+            let payload: String = try await client.rpc(["op":"approval", "request":["action":"prepare", "capability_id":action.id, "revision":action.revision, "devices":targets.map(\.id).sorted()]])
+            let pending = try PendingCapabilityApproval(payload, connection: connection)
+            try pending.validate(action: action, targets: targets)
+            let signature = try await ApprovalKey.signCapability(connection: connection, pending: pending, approve: true)
+            guard !pending.review.expired else { throw ClientError.message("Approval expired. Tap approve to try again.") }
+            let _: JSONValue = try await client.rpc(["op":"approval", "request":["action":"decide", "id":pending.review.id, "approve":true, "signature":signature]])
+            completed.insert(action.id + ":" + action.revision)
+            success = targets.isEmpty ? "\(action.title) approved. No device access added." : "\(action.title) approved for \(targets.count == 1 ? targets[0].name : "\(targets.count) devices")."
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
 struct CapabilityApprovalListView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var approval = CapabilityApprovalController()
     @State private var catalog: ApprovalCatalog?
     @State private var error: String?
     @State private var loading = false
     var body: some View {
         List {
-            if loading && catalog == nil { ProgressView("Checking approval access…") }
-            if let error {
-                Section {
-                    Text(error).foregroundStyle(.red)
-                    Button("Try again") { Task { await refresh() } }
-                }
+            if let success = approval.success {
+                Section { Label(success, systemImage: "checkmark.circle.fill").foregroundStyle(.primary) }
             }
+            if let error = approval.error ?? error {
+                Section { Text(error).foregroundStyle(.red); Button("Refresh") { Task { await refresh() } }.disabled(approval.busy) }
+            }
+            if loading && catalog == nil { ProgressView("Checking approval access…") }
             if let catalog {
-                Section("Awaiting approval") {
+                Section {
                     let pending = catalog.capabilities.filter { $0.status != "active" }
                     if pending.isEmpty { Text("No actions awaiting approval").foregroundStyle(.secondary) }
-                    ForEach(pending) { capability in actionRow(capability, devices: catalog.devices) }
+                    ForEach(pending) { actionRow($0, devices: catalog.devices) }
+                } header: { Text("Awaiting approval") }
+                  footer: { Text("Tap approve, then use Face ID or Touch ID. This activates the action and allows this iPhone to use it. Approval does not run the action.") }
+                Section("Active actions & access") {
+                    ForEach(catalog.capabilities.filter { $0.status == "active" }) { actionRow($0, devices: catalog.devices) }
                 }
-                Section {
-                    ForEach(catalog.capabilities.filter { $0.status == "active" }) { capability in
-                        actionRow(capability, devices: catalog.devices)
-                    }
-                } header: { Text("Active actions & device access") }
-                  footer: { Text("An active action also needs a grant for this phone before it appears in Actions or the share sheet.") }
             } else if !loading, let status = model.enrollmentStatus {
                 Section("Approval access") {
-                    Text(status.enabled ? "This phone is a client, not an approver." : "Phone approval has not been set up for this server.")
-                    Text(status.enabled ? "Use the enrolled approver phone to approve new actions and grant access to this device." : "Set up this phone as an approver to review new actions with Face ID or Touch ID.")
-                        .foregroundStyle(.secondary)
+                    Text(status.enabled ? "This phone is not an approver." : "Set up phone approval first.")
                     NavigationLink("Phone approval setup") { EnrollmentSettingsView() }
                 }
             }
@@ -84,161 +137,114 @@ struct CapabilityApprovalListView: View {
         .navigationTitle("Action approvals")
         .task { await refresh() }
         .refreshable { await refresh() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refresh() } }
-        }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await refresh() } } }
     }
-    private func actionRow(_ capability: Capability, devices: [ApprovalTarget]) -> some View {
-        NavigationLink {
-            CapabilityApprovalSelectionView(capability: capability, devices: devices)
-        } label: {
-            VStack(alignment: .leading) {
-                HStack { CapabilityIcon(icon: capability.manifest.icon); Text(capability.manifest.title) }
-                Text("\(capability.id) · \(capability.status)").font(.caption).foregroundStyle(.secondary)
+    private func actionRow(_ action: ApprovalAction, devices: [ApprovalTarget]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NavigationLink {
+                CapabilityApprovalSelectionView(action: action, devices: devices, approval: approval)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack { CapabilityIcon(icon: action.icon); Text(action.title).font(.headline).foregroundStyle(.primary) }
+                    Text(action.description).font(.subheadline).foregroundStyle(.secondary)
+                    Text(action.scope).font(.caption).foregroundStyle(.secondary)
+                }
+            }.disabled(approval.busy)
+            if approval.completed.contains(action.id + ":" + action.revision) {
+                Label("Approved", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+            } else if let phone = devices.first(where: { $0.id == model.connection?.deviceID }) {
+                Button {
+                    guard let connection = model.connection else { return }
+                    Task { await approval.approve(action, targets: [phone], connection: connection); await model.refresh(); await refresh() }
+                } label: {
+                    HStack {
+                        if approval.workingID == action.id { ProgressView() } else { Image(systemName: "faceid") }
+                        Text(action.status == "active" ? "Allow this iPhone" : "Approve for this iPhone")
+                    }.frame(maxWidth: .infinity)
+                }.buttonStyle(.borderedProminent).disabled(approval.busy)
             }
-        }
+        }.padding(.vertical, 6)
     }
     private func refresh() async {
-        guard !loading else { return }
-        // Keep navigation destinations and their consent state mounted during refresh.
+        guard !loading, !approval.busy else { return }
         loading = true; error = nil
         defer { loading = false }
         do {
             let client = try model.client()
-            guard try await model.refreshEnrollment(using: client), model.enrollmentStatus?.is_approver == true else {
-                catalog = nil
-                return
-            }
-            catalog = try await client.rpc(["op": "approval", "request": ["action": "catalog"]])
+            guard try await model.refreshEnrollment(using: client), model.enrollmentStatus?.is_approver == true else { catalog = nil; return }
+            catalog = try await client.rpc(["op":"approval", "request":["action":"catalog"]])
         } catch { self.error = error.localizedDescription }
     }
 }
 
 struct CapabilityApprovalSelectionView: View {
     @EnvironmentObject var model: AppModel
-    let capability: Capability
+    let action: ApprovalAction
     let devices: [ApprovalTarget]
+    @ObservedObject var approval: CapabilityApprovalController
     @State private var selected = Set<String>()
-    @State private var pending: PendingCapabilityApproval?
-    @State private var busy = false
-    @State private var error: String?
+    @State private var initialized = false
+    @State private var approved = false
     var body: some View {
         Form {
             Section {
-                HStack { CapabilityIcon(icon: capability.manifest.icon); Text(capability.manifest.title) }
-                Text(capability.manifest.description)
-                Text(capability.revision).font(.caption.monospaced()).textSelection(.enabled)
+                Text(action.title).font(.title2.bold())
+                Text(action.description)
+                Label(action.scope, systemImage: "server.rack").font(.subheadline).foregroundStyle(.secondary)
+                Text("Approval enables this action. It does not run it.").font(.footnote).foregroundStyle(.secondary)
             }
             Section {
                 ForEach(devices) { device in
                     Toggle(isOn: Binding(get: { selected.contains(device.id) }, set: { enabled in
                         if enabled { selected.insert(device.id) } else { selected.remove(device.id) }
+                        approved = false
                     })) {
                         VStack(alignment: .leading) {
-                            Text(device.name)
+                            Text(device.id == model.connection?.deviceID ? "This iPhone · \(device.name)" : device.name)
                             Text(device.id).font(.caption2.monospaced()).foregroundStyle(.secondary)
                         }
-                    }
+                    }.disabled(approval.busy)
                 }
-            } header: { Text("Grant this revision to") }
-              footer: { Text("Selected devices gain access to this revision. Other grants remain unchanged. Select none to activate the action without adding access.") }
+            } header: { Text("Allow access for") }
+              footer: { Text("Selected devices gain access. Existing grants stay unchanged; these switches do not revoke access.") }
             Section {
-                Button("Review action and grants") { prepare() }.disabled(busy)
-                if let error { Text(error).foregroundStyle(.red) }
-            }
-        }
-        .navigationTitle("Choose access")
-        .sheet(isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
-            if let pending { NavigationStack { CapabilityApprovalReviewView(pending: pending) } }
-        }
-    }
-    private func prepare() {
-        guard let connection = model.connection else { return }
-        busy = true; error = nil
-        Task {
-            defer { busy = false }
-            do {
-                let payload: String = try await model.client().rpc(["op": "approval", "request": ["action": "prepare", "capability_id": capability.id, "revision": capability.revision, "devices": selected.sorted()]])
-                let prepared = try PendingCapabilityApproval(payload, connection: connection)
-                guard prepared.review.manifest["id"]?.text == capability.id,
-                      prepared.review.revision == capability.revision,
-                      Set(prepared.review.devices.map(\.id)) == selected else {
-                    throw ClientError.message("The prepared review differs from your selection. Refresh and review again.")
+                DisclosureGroup("Execution details") {
+                    Text(action.manifest["execution"]?.pretty ?? "").font(.caption.monospaced()).textSelection(.enabled)
+                    Text("Host commands run with the execution account’s permissions.").font(.footnote)
                 }
-                pending = prepared
-            } catch { self.error = error.localizedDescription }
-        }
-    }
-}
-
-struct CapabilityApprovalReviewView: View {
-    @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    let pending: PendingCapabilityApproval
-    @State private var consent = false
-    @State private var busy = false
-    @State private var error: String?
-    var body: some View {
-        Form {
-            Section("Action") {
-                Text(pending.review.manifest["title"]?.text ?? "Action")
-                Text(pending.review.manifest["description"]?.text ?? "")
-                Text(pending.review.manifest["id"]?.text ?? "").font(.caption.monospaced())
-                Text(pending.review.revision).font(.caption.monospaced()).textSelection(.enabled)
-            }
-            if pending.review.manifest["execution"]?["kind"]?.text == "compose" {
-                Section("Composition") {
-                    Text("This target delegates the exact actions and input mappings shown below. It does not grant independent access to those actions. Changing any referenced revision stops the composition until reviewed again.")
+                DisclosureGroup("Full action manifest") {
+                    Text(action.manifest.pretty).font(.caption.monospaced()).textSelection(.enabled)
+                    Text(action.revision).font(.caption2.monospaced()).textSelection(.enabled)
                 }
             }
-            Section("Execution") {
-                Text(pending.review.manifest["execution"]?.pretty ?? "").font(.caption.monospaced()).textSelection(.enabled)
-                Text("Host actions have the execution account’s permissions. The executable hash does not freeze scripts, dependencies or other files it loads. Approval does not run the action.").font(.footnote).foregroundStyle(.secondary)
-                Text("Timeout (seconds): \(pending.review.manifest["timeout_seconds"]?.pretty ?? "")")
-            }
-            Section("Input and output") {
-                Text("Accepted content").font(.headline)
-                Text(pending.review.manifest["accepts"]?.pretty ?? "").font(.caption.monospaced())
-                DisclosureGroup("Input schema") { Text(pending.review.manifest["input_schema"]?.pretty ?? "").font(.caption.monospaced()).textSelection(.enabled) }
-                DisclosureGroup("Output schema") { Text(pending.review.manifest["output_schema"]?.pretty ?? "").font(.caption.monospaced()).textSelection(.enabled) }
-            }
-            Section("Add access for these devices") {
-                if pending.review.devices.isEmpty { Text("No new grants") }
-                ForEach(pending.review.devices) { target in
-                    VStack(alignment: .leading) {
-                        Text(target.name)
-                        Text(target.id).font(.caption.monospaced())
-                        Text(target.public_key).font(.caption2.monospaced()).textSelection(.enabled)
+        }
+        .navigationTitle("Approve action")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 10) {
+                if let error = approval.error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if approved, let success = approval.success { Label(success, systemImage: "checkmark.circle.fill").font(.footnote) }
+                Text(selected.isEmpty ? "Activate only · no device access added" : "Allow access for \(selected.count) \(selected.count == 1 ? "device" : "devices")").font(.caption).foregroundStyle(.secondary)
+                Button {
+                    guard let connection = model.connection else { return }
+                    let targets = devices.filter { selected.contains($0.id) }
+                    Task {
+                        await approval.approve(action, targets: targets, connection: connection)
+                        approved = approval.success != nil
+                        await model.refresh()
                     }
-                }
-                Text("Other grants remain unchanged. Device names are labels, not proof of identity.").font(.footnote).foregroundStyle(.secondary)
-            }
-            Section("Approval") {
-                Text("Server: \(pending.review.server_id)").font(.caption.monospaced()).textSelection(.enabled)
-                Text("Expires \(Date(timeIntervalSince1970: TimeInterval(pending.review.expires_at)).formatted())")
-                DisclosureGroup("Exact signed request") { Text(pending.payload).font(.caption2.monospaced()).textSelection(.enabled) }
-                Toggle("I authorize this execution and these grants", isOn: $consent)
-                Button("Approve with Face ID or Touch ID") { decide(true) }.disabled(busy || !consent || pending.review.expired)
-                Button("Reject request", role: .destructive) { decide(false) }.disabled(busy || pending.review.expired)
-                if let error { Text(error).foregroundStyle(.red) }
-            }
+                } label: {
+                    HStack {
+                        if approval.busy { ProgressView() } else { Image(systemName: approved ? "checkmark" : "faceid") }
+                        Text(approved ? "Approved" : "Approve with Face ID")
+                    }.frame(maxWidth: .infinity).padding(.vertical, 6)
+                }.buttonStyle(.borderedProminent).disabled(approval.busy || approved)
+            }.padding().background(.bar)
         }
-        .navigationTitle("Review approval")
-        .interactiveDismissDisabled(busy)
-        .toolbar { Button("Close") { dismiss() }.disabled(busy) }
-    }
-    private func decide(_ approve: Bool) {
-        guard let connection = model.connection else { return }
-        busy = true; error = nil
-        Task {
-            defer { busy = false }
-            do {
-                guard connection.serverID == pending.review.server_id, connection.deviceID == pending.review.approver_id,
-                      !pending.review.expired else { throw ClientError.message("Approval expired or connection changed. Review again.") }
-                let signature = try await ApprovalKey.signCapability(connection: connection, pending: pending, approve: approve)
-                let _: JSONValue = try await model.client().rpc(["op": "approval", "request": ["action": "decide", "id": pending.review.id, "approve": approve, "signature": signature]])
-                await model.refresh(); dismiss()
-            } catch { self.error = error.localizedDescription }
+        .onAppear {
+            guard !initialized else { return }
+            initialized = true
+            if let id = model.connection?.deviceID, devices.contains(where: { $0.id == id }) { selected = [id] }
         }
     }
 }

@@ -70,7 +70,7 @@ struct CompositionStep: Codable, Identifiable {
     var id: String { job_id }
 }
 
-enum JSONValue: Codable {
+enum JSONValue: Codable, Equatable {
     case object([String: JSONValue]), array([JSONValue]), string(String), number(Double), bool(Bool), null
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
