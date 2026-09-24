@@ -238,13 +238,9 @@ private struct ShareTargetRow: View {
             Button { Task { await model.send(capability) } } label: {
                 HStack {
                     CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
-                        Text(capability.manifest.description).font(.subheadline).foregroundStyle(Color(uiColor: .secondaryLabel))
-                    }
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if model.sending == capability.id { ProgressView() }
                     else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
                 }.contentShape(Rectangle())
