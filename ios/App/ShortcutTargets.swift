@@ -41,7 +41,7 @@ struct XLatchTargetQuery: EntityStringQuery {
     }
     static func available(_ capabilities: [Capability], connection: Connection) -> [Capability] {
         let disabled = ShareActionPreferences.disabled(deviceID: connection.deviceID)
-        return capabilities.filter { $0.status == "active" && !disabled.contains($0.id) }
+        return ShareActionPreferences.ordered(capabilities.filter { $0.status == "active" && !disabled.contains($0.id) }, deviceID: connection.deviceID)
     }
     static func targets() async throws -> [XLatchTarget] {
         let connection = try connection()

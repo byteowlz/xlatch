@@ -62,6 +62,13 @@ final class OutboxTests: XCTestCase {
         XCTAssertNil(ActionIcon(png_base64: "invalid").image)
         XCTAssertNil(ActionIcon(png_base64: String(repeating: "A", count: 175001)).image)
         XCTAssertNil(item.capability.manifest.icon)
+        let large = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 512)).pngData { context in
+            UIColor.systemOrange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 512, height: 512))
+        }
+        let imported = try ActionIcon.imported(large)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(imported.image).size.width, 128)
+        XCTAssertLessThanOrEqual(imported.png_base64.count, 175000)
     }
     func testChainSurvivesRestartAndCannotChangeOnRetry() throws {
         let (directory, store, connection, item) = try fixture()
@@ -180,6 +187,22 @@ final class OutboxTests: XCTestCase {
         let disabled = OutboxDelivery(store: { try OutboxStore(directory: directory) }, connection: { connection }, deliver: { _, _ in XCTFail("Disabled target invoked"); throw URLError(.badURL) }, schedule: {})
         await disabled.drain()
         XCTAssertEqual(try store.items().first?.state, .paused)
+    }
+    func testActionPresentationOrderAndIconsAreDeviceLocal() throws {
+        let (_, _, connection, item) = try fixture()
+        let second = Capability(manifest: Manifest(id: "other.action", title: "Other", description: "Other action", accepts: ["text/plain"]), revision: "other-revision", status: "active")
+        let first = item.capability
+        let otherDevice = UUID().uuidString
+        ShareActionPreferences.saveOrder([second.id, first.id], deviceID: connection.deviceID)
+        ShareActionPreferences.saveIcon(.system("waveform"), for: second.id, deviceID: connection.deviceID)
+        defer {
+            ShareActionPreferences.saveOrder([], deviceID: connection.deviceID)
+            ShareActionPreferences.saveIcon(nil, for: second.id, deviceID: connection.deviceID)
+        }
+        XCTAssertEqual(ShareActionPreferences.ordered([first, second], deviceID: connection.deviceID).map(\.id), [second.id, first.id])
+        XCTAssertEqual(ShareActionPreferences.icon(for: second.id, deviceID: connection.deviceID), .system("waveform"))
+        XCTAssertEqual(ShareActionPreferences.ordered([first, second], deviceID: otherDevice).map(\.id), [first.id, second.id])
+        XCTAssertNil(ShareActionPreferences.icon(for: second.id, deviceID: otherDevice))
     }
     func testTLSAndPermissionErrorsPauseButNetworkErrorsRetry() async throws {
         XCTAssertTrue(ClientError.isRetryable(URLError(.notConnectedToInternet)))

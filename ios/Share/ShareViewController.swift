@@ -21,6 +21,7 @@ final class ShareViewController: UIViewController {
     var content: ShareInput? { includePageText ? pageInput ?? input : input }
     @Published var capabilities: [Capability] = APIClient.cachedCapabilities()
     @Published var disabledActionIDs: Set<String> = []
+    @Published var deviceID: String?
     @Published var chain: [Capability] = []
     @Published var nextSteps: [Capability] = []
     @Published var findingSteps = false
@@ -56,6 +57,7 @@ final class ShareViewController: UIViewController {
                 input = try await ShareContentLoader.load(provider)
             }
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
+            deviceID = connection.deviceID
             disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
             capabilities = try await APIClient(connection: connection).capabilities()
         } catch { self.error = error.localizedDescription }
@@ -63,7 +65,11 @@ final class ShareViewController: UIViewController {
     var stepReferences: [[String: String]] { chain.map { ["capability_id": $0.id, "revision": $0.revision] } }
     var choices: [Capability] {
         let source = chain.isEmpty ? capabilities.filter { capability in content.map { capability.accepts($0.mime) } ?? false } : nextSteps
-        return source.filter { !disabledActionIDs.contains($0.id) }
+        let enabled = source.filter { !disabledActionIDs.contains($0.id) }
+        return deviceID.map { ShareActionPreferences.ordered(enabled, deviceID: $0) } ?? enabled
+    }
+    func iconOverride(for capabilityID: String) -> ActionIconOverride? {
+        deviceID.flatMap { ShareActionPreferences.icon(for: capabilityID, deviceID: $0) }
     }
     func addStep(_ capability: Capability) async {
         guard sending == nil, !findingSteps, chain.count < 16, capability.manifest.execution?.kind != nil,
@@ -191,7 +197,7 @@ struct ShareView: View {
     private var chainSection: some View {
         Section {
             ForEach(Array(model.chain.enumerated()), id: \.offset) { index, step in
-                HStack { CapabilityIcon(icon: step.manifest.icon, size: 24); Text("\(index + 1). \(step.manifest.title)") }
+                HStack { CapabilityIcon(icon: step.manifest.icon, override: model.iconOverride(for: step.id), size: 24); Text("\(index + 1). \(step.manifest.title)") }
             }
             HStack {
                 Button("Undo") { Task { await model.undoStep() } }.buttonStyle(.borderless)
@@ -231,7 +237,7 @@ private struct ShareTargetRow: View {
         HStack {
             Button { Task { await model.send(capability) } } label: {
                 HStack {
-                    CapabilityIcon(icon: capability.manifest.icon)
+                    CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
                         Text(capability.manifest.description).font(.subheadline).foregroundStyle(Color(uiColor: .secondaryLabel))

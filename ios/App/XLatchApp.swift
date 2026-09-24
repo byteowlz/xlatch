@@ -16,14 +16,42 @@ import OSLog
     @Published var lastUpdated: Date?
     @Published var activeServerURL: String?
     @Published var disabledActionIDs: Set<String> = []
-    var enabledCapabilities: [Capability] { capabilities.filter { !disabledActionIDs.contains($0.id) } }
+    @Published private(set) var actionOrder: [String] = []
+    @Published private(set) var actionIcons: [String: ActionIconOverride] = [:]
+    var orderedCapabilities: [Capability] {
+        guard let connection else { return capabilities }
+        return ShareActionPreferences.ordered(capabilities, deviceID: connection.deviceID)
+    }
+    var enabledCapabilities: [Capability] { orderedCapabilities.filter { !disabledActionIDs.contains($0.id) } }
     func setAction(_ id: String, enabled: Bool) {
         guard let connection else { return }
         if enabled { disabledActionIDs.remove(id) } else { disabledActionIDs.insert(id) }
         ShareActionPreferences.save(disabledActionIDs, deviceID: connection.deviceID)
     }
+    func moveActions(from source: IndexSet, to destination: Int) {
+        guard let connection else { return }
+        var ids = orderedCapabilities.map(\.id)
+        ids.move(fromOffsets: source, toOffset: destination)
+        actionOrder = ids
+        ShareActionPreferences.saveOrder(ids, deviceID: connection.deviceID)
+    }
+    func iconOverride(for capabilityID: String) -> ActionIconOverride? {
+        actionIcons[capabilityID]
+    }
+    func setIcon(_ icon: ActionIconOverride?, for capabilityID: String) {
+        guard let connection else { return }
+        if let icon { actionIcons[capabilityID] = icon } else { actionIcons.removeValue(forKey: capabilityID) }
+        ShareActionPreferences.saveIcon(icon, for: capabilityID, deviceID: connection.deviceID)
+    }
+    private func loadActionPresentation() {
+        guard let connection else { actionOrder = []; actionIcons = [:]; return }
+        actionOrder = ShareActionPreferences.ordered(capabilities, deviceID: connection.deviceID).map(\.id)
+        actionIcons = Dictionary(uniqueKeysWithValues: capabilities.compactMap { capability in
+            ShareActionPreferences.icon(for: capability.id, deviceID: connection.deviceID).map { (capability.id, $0) }
+        })
+    }
     init() {
-        do { connection = try CredentialStore.load(); capabilities = APIClient.cachedCapabilities(); if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) } }
+        do { connection = try CredentialStore.load(); capabilities = APIClient.cachedCapabilities(); if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }; loadActionPresentation() }
         catch { self.error = error.localizedDescription }
     }
     func client() throws -> APIClient {
@@ -37,6 +65,7 @@ import OSLog
             let client = try client()
             guard try await refreshEnrollment(using: client) else { return }
             capabilities = try await client.capabilities()
+            loadActionPresentation()
             let recent: [Job] = try await client.rpc(["op": "jobs"])
             let previous = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0.status) })
             for job in recent where job.isFinished && ["queued", "running"].contains(previous[job.id] ?? "") {
@@ -55,10 +84,11 @@ import OSLog
         enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil
         capabilities = []; jobs = []; activeServerURL = nil
         if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }
+        loadActionPresentation()
         await refresh()
     }
     func disconnect() {
-        do { try CredentialStore.clear(); connection = nil; enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = []; jobs = []; activeServerURL = nil; lastUpdated = nil; error = nil }
+        do { try CredentialStore.clear(); connection = nil; enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = []; jobs = []; activeServerURL = nil; lastUpdated = nil; error = nil; loadActionPresentation() }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -193,7 +223,7 @@ struct ActionsView: View {
                         ForEach(model.enabledCapabilities) { capability in
                             NavigationLink { ComposeView(capability: capability) } label: {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    HStack { CapabilityIcon(icon: capability.manifest.icon); Text(capability.manifest.title).font(.headline) }
+                                    HStack { CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id)); Text(capability.manifest.title).font(.headline) }
                                     Text(capability.manifest.description).font(.subheadline).foregroundStyle(.secondary)
                                     Text(capability.contentLabel).font(.caption).foregroundStyle(.secondary)
                                 }.padding(.vertical, 6)
@@ -458,17 +488,24 @@ struct SettingsView: View {
                     Text(addresses.count > 1 ? "All addresses were saved during pairing. The LAN address may be faster at home; another saved address can work when you’re away." : "Only one address was saved. Pair again with a server advertising both LAN and tailnet addresses to enable switching between them.")
                 }
                 Section {
-                    ForEach(model.capabilities) { capability in
-                        Toggle(isOn: Binding(get: { !model.disabledActionIDs.contains(capability.id) }, set: { model.setAction(capability.id, enabled: $0) })) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(capability.manifest.title)
-                                Text(capability.manifest.description).font(.caption).foregroundStyle(.secondary)
+                    ForEach(model.orderedCapabilities) { capability in
+                        HStack(spacing: 12) {
+                            NavigationLink { ActionAppearanceView(capability: capability) } label: {
+                                HStack(spacing: 12) {
+                                    CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(capability.manifest.title)
+                                        Text(capability.manifest.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    }
+                                }
                             }
+                            Toggle("Enable \(capability.manifest.title)", isOn: Binding(get: { !model.disabledActionIDs.contains(capability.id) }, set: { model.setAction(capability.id, enabled: $0) }))
+                                .labelsHidden()
                         }
-                    }
+                    }.onMove(perform: model.moveActions)
                     if model.capabilities.isEmpty { Text("No actions granted to this phone yet.").foregroundStyle(.secondary) }
                 } header: { Text("Actions on this phone") } footer: {
-                    Text("Enabled actions appear in the Actions tab and, for compatible content, in the share sheet. Turning one off does not revoke its server permission or affect other devices. New approved and granted actions appear automatically.")
+                    Text("Tap an action to change its icon. Use Edit to reorder actions in the app, share sheet, chains and Shortcuts. Turning one off does not revoke its server permission or affect other devices.")
                 }
                 Section("Notifications") {
                     Button("Enable result notifications") {
@@ -488,7 +525,58 @@ struct SettingsView: View {
                     NavigationLink("Action approvals & access") { CapabilityApprovalListView() }
                     NavigationLink("Update server identity") { ServerIdentityUpdateView() }
                 }
-            }.navigationTitle("Settings").confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
+            }.navigationTitle("Settings").toolbar { EditButton() }
+                .confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
         }
+    }
+}
+
+private struct ActionAppearanceView: View {
+    @EnvironmentObject private var model: AppModel
+    let capability: Capability
+    @State private var choosingImage = false
+    @State private var error: String?
+    private let symbols = ["bolt.fill", "paperplane.fill", "tray.and.arrow.down.fill", "link", "text.bubble.fill", "waveform", "photo.fill", "film.fill", "doc.fill", "wand.and.stars", "terminal.fill", "gearshape.fill"]
+    private var selected: ActionIconOverride? { model.iconOverride(for: capability.id) }
+    var body: some View {
+        Form {
+            Section {
+                HStack(spacing: 16) {
+                    CapabilityIcon(icon: capability.manifest.icon, override: selected, size: 48)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(capability.manifest.title).font(.headline)
+                        Text(selected == nil ? "Using server icon" : "Using icon on this iPhone").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }.padding(.vertical, 4)
+            }
+            Section("Symbols") {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
+                    ForEach(symbols, id: \.self) { symbol in
+                        Button { model.setIcon(.system(symbol), for: capability.id) } label: {
+                            Image(systemName: symbol).font(.title2).frame(width: 44, height: 44)
+                                .background(selected?.systemName == symbol ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                        }.buttonStyle(.plain).accessibilityLabel("Use \(symbol) icon")
+                    }
+                }.padding(.vertical, 6)
+            }
+            Section {
+                Button { choosingImage = true } label: { Label("Choose image…", systemImage: "photo") }
+                if selected != nil { Button("Use server icon") { model.setIcon(nil, for: capability.id) } }
+                if let error { Text(error).foregroundStyle(.red) }
+            } footer: { Text("This choice is stored only on this iPhone. The action’s server-provided icon remains unchanged.") }
+        }.navigationTitle("Action icon").navigationBarTitleDisplayMode(.inline)
+            .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in
+                Task { await importImage(result) }
+            }
+    }
+    @MainActor private func importImage(_ result: Result<URL, Error>) async {
+        do {
+            let url = try result.get()
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            model.setIcon(.custom(try ActionIcon.imported(data)), for: capability.id)
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 }

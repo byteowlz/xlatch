@@ -190,12 +190,52 @@ struct ShareInput {
 
 
 enum ShareActionPreferences {
+    private static let suite = "group.com.byteowlz.xlatch"
+
     static func disabled(deviceID: String) -> Set<String> {
-        Set(UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.stringArray(forKey: "disabled-actions.\(deviceID)") ?? [])
+        Set(UserDefaults(suiteName: suite)?.stringArray(forKey: "disabled-actions.\(deviceID)") ?? [])
     }
     static func save(_ disabled: Set<String>, deviceID: String) {
-        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(disabled.sorted(), forKey: "disabled-actions.\(deviceID)")
+        UserDefaults(suiteName: suite)?.set(disabled.sorted(), forKey: "disabled-actions.\(deviceID)")
     }
+    static func ordered(_ capabilities: [Capability], deviceID: String) -> [Capability] {
+        let order = presentation(deviceID: deviceID).order
+        let ranks = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+        return capabilities.enumerated().sorted { left, right in
+            let leftRank = ranks[left.element.id] ?? Int.max
+            let rightRank = ranks[right.element.id] ?? Int.max
+            return leftRank == rightRank ? left.offset < right.offset : leftRank < rightRank
+        }.map(\.element)
+    }
+    static func saveOrder(_ order: [String], deviceID: String) {
+        var settings = presentation(deviceID: deviceID)
+        settings.order = order.reduce(into: []) { result, id in
+            if !result.contains(id) { result.append(id) }
+        }
+        save(settings, deviceID: deviceID)
+    }
+    static func icon(for capabilityID: String, deviceID: String) -> ActionIconOverride? {
+        presentation(deviceID: deviceID).icons[capabilityID]
+    }
+    static func saveIcon(_ icon: ActionIconOverride?, for capabilityID: String, deviceID: String) {
+        var settings = presentation(deviceID: deviceID)
+        settings.icons[capabilityID] = icon
+        save(settings, deviceID: deviceID)
+    }
+    private static func presentation(deviceID: String) -> ActionPresentationSettings {
+        guard let data = UserDefaults(suiteName: suite)?.data(forKey: "action-presentation.\(deviceID)"),
+              let settings = try? JSONDecoder().decode(ActionPresentationSettings.self, from: data) else { return ActionPresentationSettings() }
+        return settings
+    }
+    private static func save(_ settings: ActionPresentationSettings, deviceID: String) {
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        UserDefaults(suiteName: suite)?.set(data, forKey: "action-presentation.\(deviceID)")
+    }
+}
+
+private struct ActionPresentationSettings: Codable {
+    var order: [String] = []
+    var icons: [String: ActionIconOverride] = [:]
 }
 
 extension ClientError {
@@ -221,14 +261,41 @@ struct ActionIcon: Codable, Hashable {
               (1...256).contains(width), (1...256).contains(height) else { return nil }
         return UIImage(data: data)
     }
+    static func imported(_ data: Data) throws -> ActionIcon {
+        guard data.count <= 20 * 1024 * 1024,
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            throw ClientError.message("Choose an image smaller than 20 MB.")
+        }
+        for size in [128, 96, 64] {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: size
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  let png = UIImage(cgImage: image).pngData(), png.count <= 131_072 else { continue }
+            return ActionIcon(png_base64: png.base64EncodedString())
+        }
+        throw ClientError.message("That image could not be reduced to a usable action icon.")
+    }
+}
+
+struct ActionIconOverride: Codable, Hashable {
+    var systemName: String?
+    var image: ActionIcon?
+    static func system(_ name: String) -> ActionIconOverride { ActionIconOverride(systemName: name, image: nil) }
+    static func custom(_ icon: ActionIcon) -> ActionIconOverride { ActionIconOverride(systemName: nil, image: icon) }
 }
 
 struct CapabilityIcon: View {
     let icon: ActionIcon?
+    var override: ActionIconOverride? = nil
     var size: CGFloat = 32
     var body: some View {
         Group {
-            if let image = icon?.image { Image(uiImage: image).resizable().scaledToFit() }
+            if let image = override?.image?.image { Image(uiImage: image).resizable().scaledToFit() }
+            else if let systemName = override?.systemName { Image(systemName: systemName).resizable().scaledToFit().foregroundStyle(.tint) }
+            else if let image = icon?.image { Image(uiImage: image).resizable().scaledToFit() }
             else { Image(systemName: "bolt.fill").foregroundStyle(.tint) }
         }.frame(width: size, height: size).accessibilityHidden(true)
     }
