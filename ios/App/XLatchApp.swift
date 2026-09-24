@@ -116,7 +116,6 @@ import OSLog
                     TabView {
                         ActionsView().tabItem { Label("Actions", systemImage: "bolt") }
                         ActivityView().tabItem { Label("Activity", systemImage: "tray") }
-                        OutboxView().tabItem { Label("Outbox", systemImage: "tray.and.arrow.up") }
                         SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }
                     }
                 }
@@ -325,6 +324,8 @@ struct ActivityView: View {
                             Text(row.created, style: .relative).font(.caption2).foregroundStyle(.secondary)
                         }.padding(.vertical, 4)
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) { deliveryActions(for: row) }
+                    .contextMenu { deliveryActions(for: row) }
                 }
                 Section { NavigationLink("Manage queued shares") { OutboxView() } }
             }.navigationTitle("Activity")
@@ -341,6 +342,22 @@ struct ActivityView: View {
         do { saved = try OutboxStore().items(); error = nil }
         catch { self.error = error.localizedDescription }
     }
+    @ViewBuilder private func deliveryActions(for row: ActivityEntry) -> some View {
+        if row.canStop, let id = row.outboxID {
+            Button(role: .destructive) { edit { try $0.cancel(id) } } label: { Label("Stop retrying", systemImage: "stop.circle") }
+        }
+        if row.canRetry, let id = row.outboxID {
+            Button { retry(id) } label: { Label("Retry now", systemImage: "arrow.clockwise") }.tint(.blue)
+        }
+    }
+    private func edit(_ change: (OutboxStore) throws -> Void) {
+        do { try change(OutboxStore()); reload(); error = nil }
+        catch { self.error = error.localizedDescription }
+    }
+    private func retry(_ id: String) {
+        edit { try $0.retry(id) }
+        Task { await OutboxDelivery.shared.drain(id: id); reload() }
+    }
 }
 
 struct ActivityEntry: Identifiable {
@@ -352,6 +369,10 @@ struct ActivityEntry: Identifiable {
     let preview: String?
     let created: Date
     let needsAttention: Bool
+    let outboxID: String?
+    let outboxState: OutboxItem.State?
+    var canRetry: Bool { outboxState.map { [.waiting, .paused].contains($0) } ?? false }
+    var canStop: Bool { outboxState.map { [.waiting, .sending, .paused].contains($0) } ?? false }
 
     static func merge(jobs: [Job], outbox: [OutboxItem], connection: Connection?) -> [ActivityEntry] {
         let local = outbox.filter { item in
@@ -364,12 +385,13 @@ struct ActivityEntry: Identifiable {
             let receipt = receipts[job.id]
             return ActivityEntry(id: job.id, jobID: job.id, title: receipt?.targetTitle ?? job.capability_id,
                 status: job.status == "succeeded" ? "Completed" : job.statusLabel, server: receipt?.serverURL ?? connection?.url ?? "",
-                preview: receipt?.label, created: Date(timeIntervalSince1970: TimeInterval(job.created_at)), needsAttention: job.status == "failed")
+                preview: receipt?.label, created: Date(timeIntervalSince1970: TimeInterval(job.created_at)), needsAttention: job.status == "failed",
+                outboxID: nil, outboxState: nil)
         }
         let pending = local.filter { !known.contains($0.jobID ?? "") }.map { item in
             ActivityEntry(id: "outbox:" + item.id, jobID: item.jobID, title: item.targetTitle,
                 status: item.statusLabel, server: item.serverURL, preview: item.label, created: item.created,
-                needsAttention: [.paused, .expired].contains(item.state))
+                needsAttention: [.paused, .expired].contains(item.state), outboxID: item.id, outboxState: item.state)
         }
         return (remote + pending).sorted { $0.created == $1.created ? $0.id < $1.id : $0.created > $1.created }
     }

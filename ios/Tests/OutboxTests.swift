@@ -96,7 +96,13 @@ final class OutboxTests: XCTestCase {
         XCTAssertEqual(rows.first?.title, "Session")
         let replacement = Connection(url: connection.url, pin: "different-server", deviceID: connection.deviceID, privateKey: connection.privateKey)
         XCTAssertTrue(ActivityEntry.merge(jobs: [], outbox: [original], connection: replacement).isEmpty)
-        XCTAssertEqual(ActivityEntry.merge(jobs: [], outbox: [original], connection: connection).first?.id, "outbox:" + original.id)
+        let pending = try XCTUnwrap(ActivityEntry.merge(jobs: [], outbox: [original], connection: connection).first)
+        XCTAssertEqual(pending.id, "outbox:" + original.id)
+        XCTAssertEqual(pending.outboxID, original.id)
+        XCTAssertTrue(pending.canRetry)
+        XCTAssertTrue(pending.canStop)
+        XCTAssertNil(rows.first?.outboxID)
+        XCTAssertFalse(rows.first?.canRetry ?? true)
     }
     func testRestartPreservesPayloadTargetAndDeduplicationID() throws {
         let (directory, store, connection, item) = try fixture()
