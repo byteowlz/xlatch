@@ -60,6 +60,14 @@ struct Job: Codable, Identifiable {
     }
 }
 
+struct ParkedItem: Codable, Identifiable, Equatable {
+    let id: String
+    let label: String
+    let mime_type: String
+    let created_at: Int64
+    var created: Date { Date(timeIntervalSince1970: TimeInterval(created_at)) }
+}
+
 struct CompositionStep: Codable, Identifiable {
     let position: Int
     let job_id: String

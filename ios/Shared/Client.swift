@@ -153,6 +153,40 @@ final class APIClient {
     func invoke(_ capability: Capability, input: ShareInput, key: String, progress: ((Int64, Int64) -> Void)? = nil) async throws -> Job {
         try await rpc(["op": "invoke", "capability_id": capability.id, "revision": capability.revision, "input": input.payload, "idempotency_key": key], progress: progress)
     }
+    private struct UploadState: Decodable { let offset: UInt64; let complete: Bool; let chunk_bytes: Int }
+    func upload(_ input: ShareInput, id: String, progress: ((Int64, Int64) -> Void)? = nil) async throws -> ShareInput {
+        guard let url = input.localFile, let metadata = input.payload["file"] as? [String: Any],
+              let name = metadata["name"] as? String, let mime = metadata["mime_type"] as? String else {
+            return input
+        }
+        let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        guard let expectedSize = metadata["size"] as? NSNumber, expectedSize.uint64Value == size else {
+            throw ClientError.message("Saved file size changed.")
+        }
+        var state: UploadState = try await rpc(["op":"upload", "request":["action":"begin", "id":id, "name":name, "mime_type":mime, "size":size]])
+        guard state.offset <= size, state.chunk_bytes > 0, state.chunk_bytes <= 1024 * 1024 else {
+            throw ClientError.message("Invalid upload response.")
+        }
+        progress?(Int64(state.offset), Int64(size))
+        while state.offset < size {
+            try Task.checkCancellation()
+            try handle.seek(toOffset: state.offset)
+            guard let chunk = try handle.read(upToCount: state.chunk_bytes), !chunk.isEmpty else {
+                throw ClientError.message("Saved file changed during upload.")
+            }
+            let expected = state.offset + UInt64(chunk.count)
+            let next: UploadState = try await rpc(["op":"upload", "request":["action":"chunk", "id":id, "offset":state.offset, "data_base64":chunk.base64EncodedString()]])
+            guard next.offset == expected, next.chunk_bytes == state.chunk_bytes else {
+                throw ClientError.message("Server upload offset changed unexpectedly.")
+            }
+            state = next; progress?(Int64(state.offset), Int64(size))
+        }
+        guard state.complete else { throw ClientError.message("Upload is incomplete.") }
+        var payload = input.payload
+        payload["file"] = ["artifact_id":id, "name":name, "mime_type":mime, "size":size]
+        return ShareInput(mime: input.mime, label: input.label, payload: payload)
+    }
     private static let capabilityCacheVersion = 2
     private struct CapabilityCache: Codable {
         let version: Int?

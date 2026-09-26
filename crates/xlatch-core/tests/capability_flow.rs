@@ -2046,3 +2046,36 @@ fn changed_or_expired_device_reviews_cannot_be_applied() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn parked_content_is_owner_scoped_and_dispatches_once() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let mut parked_manifest = manifest();
+    parked_manifest.input_schema = json!({"type":"object","required":["text","mime_type"],"properties":{"text":{"type":"string"},"mime_type":{"const":"text/plain"}},"additionalProperties":false});
+    let capability = store.register(&parked_manifest)?;
+    store.approve("echo", &capability.revision, false)?;
+    let (phone, _) = pair(&mut store, 121)?;
+    let (other, _) = pair(&mut store, 122)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let input = json!({"text":"read this later","mime_type":"text/plain"});
+
+    let item = store.park(&phone, &id, "read this later", "text/plain", &input)?;
+    assert_eq!(store.parked(&phone)?, vec![item.clone()]);
+    assert!(store.parked(&other)?.is_empty());
+    assert!(store.delete_parked(&other, &id).is_err());
+    assert_eq!(
+        store.park(&phone, &id, "read this later", "text/plain", &input)?,
+        item
+    );
+    assert_eq!(store.parked_candidates(&phone, &id)?[0].manifest.id, "echo");
+
+    let job = store.dispatch_parked(&phone, &id, "echo", &capability.revision)?;
+    assert!(store.parked(&phone)?.is_empty());
+    assert_eq!(job.input, input);
+    assert_eq!(
+        store.dispatch_parked(&phone, &id, "echo", &capability.revision)?,
+        job
+    );
+    Ok(())
+}

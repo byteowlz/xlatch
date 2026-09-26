@@ -43,6 +43,7 @@ pub mod enrollment;
 pub mod execution;
 pub mod executor;
 pub mod local;
+pub mod parking;
 pub mod service;
 pub mod store;
 pub mod worker;

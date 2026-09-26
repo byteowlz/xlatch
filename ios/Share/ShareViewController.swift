@@ -31,10 +31,13 @@ final class ShareViewController: UIViewController {
     @Published var sending: String?
     @Published var sent = false
     @Published var receipt: OutboxItem?
+    @Published var parked = false
     @Published var uploadingID: String?
+    @Published var parkProgress: UploadProgress?
     @Published var error: String?
     private let context: NSExtensionContext?
     private var requestKeys: [String: String] = [:]
+    private let parkID = UUID().uuidString
     private var completed = false
     init(context: NSExtensionContext?) { self.context = context }
     func done() {
@@ -119,6 +122,22 @@ final class ShareViewController: UIViewController {
             sent = true
         } catch { self.error = error.localizedDescription }
     }
+    func park() async {
+        guard sending == nil, let original = content else { return }
+        sending = "park"; error = nil; parkProgress = original.localFile == nil ? nil : UploadProgress(sent: 0, total: 0)
+        defer { sending = nil; parkProgress = nil }
+        do {
+            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
+            let client = try APIClient(connection: connection)
+            let input = try await client.upload(original, id: parkID) { [weak self] sent, total in
+                Task { @MainActor in self?.parkProgress = UploadProgress(sent: sent, total: total) }
+            }
+            let _: ParkedItem = try await client.rpc(["op":"park", "id":parkID,
+                "label":String(input.label.prefix(500)), "mime_type":input.mime, "input":input.payload])
+            if let localFile = original.localFile { try? FileManager.default.removeItem(at: localFile) }
+            parked = true; sent = true
+        } catch { self.error = error.localizedDescription }
+    }
     private static func page(in items: [NSExtensionItem]) async -> CapturedContext? {
         for provider in items.flatMap({ $0.attachments ?? [] }) where provider.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier) {
             // Safari enrichment is optional; another attachment still provides the original share.
@@ -160,12 +179,12 @@ struct ShareView: View {
     private var confirmation: some View {
         VStack(spacing: 20) {
             Image(systemName: "checkmark.circle").font(.system(size: 48)).foregroundStyle(.tint)
-            Text(model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone").font(.title2.bold())
-            Text(model.receipt?.confirmation ?? "Open xlatch’s Outbox to check delivery.")
+            Text(model.parked ? "Saved for later" : (model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone")).font(.title2.bold())
+            Text(model.parked ? "Open Later in xlatch whenever you are ready to choose a target." : (model.receipt?.confirmation ?? "Open xlatch’s Outbox to check delivery."))
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button("Done") { model.done() }.buttonStyle(.borderedProminent)
         }.padding(28).task {
-            guard model.receipt?.state == .sent else { return }
+            guard model.parked || model.receipt?.state == .sent else { return }
             do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
             model.done()
         }
@@ -173,6 +192,14 @@ struct ShareView: View {
     private var actionList: some View {
         List {
             if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
+            if model.content != nil {
+                Section {
+                    Button { Task { await model.park() } } label: {
+                        Label(model.sending == "park" ? "Saving…" : "Save for later", systemImage: "bookmark")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.disabled(model.sending != nil)
+                }
+            }
             if !model.chain.isEmpty { chainSection }
             if let message = model.savedMessage { Section { Text(message) } }
             if model.pageInput != nil {
@@ -190,7 +217,8 @@ struct ShareView: View {
                 }
             }
             if model.loading || model.findingSteps { ProgressView("Finding compatible actions…") }
-            if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
+            if let progress = model.parkProgress { Section { UploadProgressBar(progress: progress) } }
+            else if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
             if model.content != nil { targets }
         }
     }

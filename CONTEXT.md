@@ -16,4 +16,6 @@
 
 **Outbox item**: Content saved on a client for delivery to one exact capability revision, with a stable invocation ID. It is not a server Job until accepted.
 
+**Parked item**: Owner-scoped content saved durably on the server before any target is selected. Dispatch rechecks the current grant and contract, creates a Job, and removes the parked item.
+
 **Composition**: A capability that passes results through an ordered set of exact capability revisions, with its own approval and grants.

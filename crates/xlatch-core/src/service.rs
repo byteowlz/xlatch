@@ -28,6 +28,27 @@ pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Valu
             store.save_chain(owner, &steps, &title)?,
         )?),
         Request::Upload { request } => crate::uploads::dispatch(store, owner, request),
+        Request::Park {
+            id,
+            label,
+            mime_type,
+            input,
+        } => Ok(serde_json::to_value(
+            store.park(owner, &id, &label, &mime_type, &input)?,
+        )?),
+        Request::Parked => Ok(serde_json::to_value(store.parked(owner)?)?),
+        Request::ParkedCandidates { id } => {
+            Ok(serde_json::to_value(store.parked_candidates(owner, &id)?)?)
+        }
+        Request::DispatchParked {
+            id,
+            capability_id,
+            revision,
+        } => job_response(store.dispatch_parked(owner, &id, &capability_id, &revision)?),
+        Request::DeleteParked { id } => {
+            store.delete_parked(owner, &id)?;
+            Ok(serde_json::json!({"deleted": id}))
+        }
         Request::Discover => Ok(serde_json::to_value(store.discover(owner)?)?),
         Request::Invoke {
             capability_id,

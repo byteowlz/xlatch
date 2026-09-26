@@ -284,6 +284,38 @@ pub enum Request {
         /// Upload operation.
         request: crate::uploads::UploadRequest,
     },
+    /// Save content before selecting an execution target.
+    Park {
+        /// Client-generated stable retry identity.
+        id: String,
+        /// Human-readable content summary.
+        label: String,
+        /// MIME type used for compatibility filtering.
+        mime_type: String,
+        /// Original typed share input.
+        input: Value,
+    },
+    /// List caller-owned parked content without large bodies.
+    Parked,
+    /// List currently granted targets compatible with one parked item.
+    ParkedCandidates {
+        /// Parked item id.
+        id: String,
+    },
+    /// Dispatch one parked item to an exact active capability revision.
+    DispatchParked {
+        /// Parked item id.
+        id: String,
+        /// Selected capability id.
+        capability_id: String,
+        /// Exact selected revision.
+        revision: String,
+    },
+    /// Permanently discard one parked item.
+    DeleteParked {
+        /// Parked item id.
+        id: String,
+    },
     /// Return authorized leaf actions compatible with the selected chain.
     ChainCandidates {
         /// Ordered exact revisions already selected.

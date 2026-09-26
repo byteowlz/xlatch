@@ -93,11 +93,11 @@ pub fn dispatch(store: &Store, owner: &str, request: UploadRequest) -> Result<Va
         UploadRequest::Abort { id } => {
             ensure!(
                 !store.conn.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM job_uploads WHERE upload_id=?1)",
+                    "SELECT EXISTS(SELECT 1 FROM job_uploads WHERE upload_id=?1 UNION SELECT 1 FROM parked_items WHERE upload_id=?1)",
                     [&id],
                     |r| r.get::<_, bool>(0)
                 )?,
-                "upload is bound to a job"
+                "upload is bound to a job or parked item"
             );
             store.conn.execute(
                 "DELETE FROM uploads WHERE id=?1 AND owner=?2",
@@ -290,7 +290,7 @@ impl Store {
                 || first.file_input == Some(FileInput::Path),
             "target needs file-path support for large uploads"
         );
-        let (name,mime,size):(String,String,u64) = self.conn.query_row("SELECT name,mime,size FROM uploads WHERE id=?1 AND owner=?2 AND received=size AND expires>?3",params![id,owner,now()],|r|Ok((r.get(0)?,r.get(1)?,r.get::<_,i64>(2)? as u64)))?;
+        let (name,mime,size):(String,String,u64) = self.conn.query_row("SELECT name,mime,size FROM uploads WHERE id=?1 AND owner=?2 AND received=size AND (expires>?3 OR EXISTS(SELECT 1 FROM parked_items WHERE upload_id=uploads.id))",params![id,owner,now()],|r|Ok((r.get(0)?,r.get(1)?,r.get::<_,i64>(2)? as u64)))?;
         let file = input.get("file").context("file missing")?;
         ensure!(
             file["name"] == name
@@ -341,7 +341,7 @@ impl Store {
     /// Returns storage failures.
     pub fn prune_uploads(&self) -> Result<()> {
         self.conn.execute("DELETE FROM job_uploads WHERE upload_id IN (SELECT id FROM uploads WHERE expires<?1) AND NOT EXISTS(SELECT 1 FROM job_uploads other JOIN jobs j ON j.id=other.job_id WHERE other.upload_id=job_uploads.upload_id AND j.status IN ('queued','running'))",[now()])?;
-        self.conn.execute("DELETE FROM uploads WHERE expires<?1 AND NOT EXISTS(SELECT 1 FROM job_uploads WHERE upload_id=uploads.id)",[now()])?;
+        self.conn.execute("DELETE FROM uploads WHERE expires<?1 AND NOT EXISTS(SELECT 1 FROM job_uploads WHERE upload_id=uploads.id) AND NOT EXISTS(SELECT 1 FROM parked_items WHERE upload_id=uploads.id)",[now()])?;
         Ok(())
     }
 }

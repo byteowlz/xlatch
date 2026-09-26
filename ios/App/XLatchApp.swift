@@ -11,6 +11,7 @@ import OSLog
     @Published var connection: Connection?
     @Published var capabilities: [Capability] = []
     @Published var jobs: [Job] = []
+    @Published var parkedItems: [ParkedItem] = []
     @Published var error: String?
     @Published var refreshing = false
     @Published var lastUpdated: Date?
@@ -66,6 +67,7 @@ import OSLog
             guard try await refreshEnrollment(using: client) else { return }
             capabilities = try await client.capabilities()
             loadActionPresentation()
+            parkedItems = try await client.rpc(["op": "parked"])
             let recent: [Job] = try await client.rpc(["op": "jobs"])
             let previous = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0.status) })
             for job in recent where job.isFinished && ["queued", "running"].contains(previous[job.id] ?? "") {
@@ -82,13 +84,13 @@ import OSLog
     func pair(_ ticket: PairingTicket) async throws {
         connection = try await APIClient.pair(ticket, name: UIDevice.current.name)
         enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil
-        capabilities = []; jobs = []; activeServerURL = nil
+        capabilities = []; jobs = []; parkedItems = []; activeServerURL = nil
         if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }
         loadActionPresentation()
         await refresh()
     }
     func disconnect() {
-        do { try CredentialStore.clear(); connection = nil; enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = []; jobs = []; activeServerURL = nil; lastUpdated = nil; error = nil; loadActionPresentation() }
+        do { try CredentialStore.clear(); connection = nil; enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = []; jobs = []; parkedItems = []; activeServerURL = nil; lastUpdated = nil; error = nil; loadActionPresentation() }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -115,6 +117,7 @@ import OSLog
                 else {
                     TabView {
                         ActionsView().tabItem { Label("Actions", systemImage: "bolt") }
+                        ParkedView().tabItem { Label("Later", systemImage: "bookmark") }
                         ActivityView().tabItem { Label("Activity", systemImage: "tray") }
                         SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }
                     }
@@ -292,6 +295,115 @@ struct ComposeView: View {
                 await model.refresh()
             } catch { self.error = error.localizedDescription }
         }
+    }
+}
+
+struct ParkedView: View {
+    @EnvironmentObject var model: AppModel
+    var body: some View {
+        NavigationStack {
+            List {
+                if let error = model.error { Text(error).foregroundStyle(.red) }
+                if model.parkedItems.isEmpty {
+                    ContentUnavailableView("Nothing saved for later", systemImage: "bookmark",
+                        description: Text("Use Save for later in the xlatch share sheet, then choose a target here when you are ready."))
+                }
+                ForEach(model.parkedItems) { item in
+                    NavigationLink { ParkedItemView(item: item) } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: parkedSymbol(item.mime_type)).foregroundStyle(.tint).frame(width: 28)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.label).font(.headline).lineLimit(2)
+                                Text(item.created, style: .relative).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 4)
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) { Task { await delete(item) } } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Later")
+            .refreshable { await model.refresh() }
+        }
+    }
+    private func delete(_ item: ParkedItem) async {
+        do {
+            let _: [String: String] = try await model.client().rpc(["op":"delete_parked", "id":item.id])
+            model.parkedItems.removeAll { $0.id == item.id }
+        } catch { model.error = error.localizedDescription }
+    }
+}
+
+private func parkedSymbol(_ mime: String) -> String {
+    if mime.hasPrefix("image/") { return "photo" }
+    if mime.hasPrefix("audio/") { return "waveform" }
+    if mime.hasPrefix("video/") { return "video" }
+    if mime == "text/uri-list" { return "link" }
+    if mime.hasPrefix("text/") { return "text.alignleft" }
+    return "doc"
+}
+
+struct ParkedItemView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var model: AppModel
+    let item: ParkedItem
+    @State private var candidates: [Capability] = []
+    @State private var loading = true
+    @State private var sending: String?
+    @State private var error: String?
+    var body: some View {
+        List {
+            Section("Saved content") {
+                Label(item.label, systemImage: parkedSymbol(item.mime_type)).lineLimit(4)
+                LabeledContent("Type", value: item.mime_type)
+            }
+            if let error { Section { Text(error).foregroundStyle(.red) } }
+            if loading { Section { ProgressView("Finding compatible actions…") } }
+            else if candidates.isEmpty {
+                ContentUnavailableView("No compatible actions", systemImage: "bolt.slash",
+                    description: Text("Enable or grant an action that accepts this content."))
+            } else {
+                Section("Send to") {
+                    ForEach(orderedCandidates) { capability in
+                        Button { Task { await dispatch(capability) } } label: {
+                            HStack {
+                                CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
+                                Text(capability.manifest.title).font(.headline).foregroundStyle(.primary)
+                                Spacer()
+                                if sending == capability.id { ProgressView() }
+                                else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
+                            }.contentShape(Rectangle())
+                        }.disabled(sending != nil)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Saved for later")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+    private var orderedCandidates: [Capability] {
+        guard let connection = model.connection else { return candidates }
+        return ShareActionPreferences.ordered(candidates, deviceID: connection.deviceID)
+    }
+    private func load() async {
+        loading = true; defer { loading = false }
+        do {
+            candidates = try await model.client().rpc(["op":"parked_candidates", "id":item.id])
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+    private func dispatch(_ capability: Capability) async {
+        sending = capability.id; defer { sending = nil }
+        do {
+            let _: Job = try await model.client().rpc(["op":"dispatch_parked", "id":item.id,
+                "capability_id":capability.id, "revision":capability.revision])
+            model.parkedItems.removeAll { $0.id == item.id }
+            await model.refresh(); dismiss()
+        } catch { self.error = error.localizedDescription }
     }
 }
 
