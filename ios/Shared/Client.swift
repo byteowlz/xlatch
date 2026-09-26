@@ -153,14 +153,16 @@ final class APIClient {
     func invoke(_ capability: Capability, input: ShareInput, key: String, progress: ((Int64, Int64) -> Void)? = nil) async throws -> Job {
         try await rpc(["op": "invoke", "capability_id": capability.id, "revision": capability.revision, "input": input.payload, "idempotency_key": key], progress: progress)
     }
+    private static let capabilityCacheVersion = 2
     private struct CapabilityCache: Codable {
+        let version: Int?
         let deviceID: String
         let pin: String
         let capabilities: [Capability]
     }
     func capabilities() async throws -> [Capability] {
         let capabilities: [Capability] = try await rpc(["op": "discover"])
-        let cache = CapabilityCache(deviceID: connection.deviceID, pin: connection.pin, capabilities: capabilities)
+        let cache = CapabilityCache(version: Self.capabilityCacheVersion, deviceID: connection.deviceID, pin: connection.pin, capabilities: capabilities)
         UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(try JSONEncoder().encode(cache), forKey: "capabilities")
         return capabilities
     }
@@ -168,6 +170,7 @@ final class APIClient {
         guard let connection = try? CredentialStore.load(),
               let data = UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.data(forKey: "capabilities"),
               let cache = try? JSONDecoder().decode(CapabilityCache.self, from: data),
+              cache.version == capabilityCacheVersion,
               cache.deviceID == connection.deviceID, cache.pin == connection.pin else { return [] }
         return cache.capabilities
     }
