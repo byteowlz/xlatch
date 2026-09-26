@@ -92,9 +92,12 @@ enum Command {
     /// Submit a manifest for approval.
     Register {
         manifest: PathBuf,
-        /// Embed a PNG or self-contained SVG as a portable action icon.
+        /// Embed a PNG or self-contained SVG for light surfaces and legacy clients.
         #[arg(long)]
         icon: Option<PathBuf>,
+        /// Optional PNG or SVG variant for dark surfaces.
+        #[arg(long, requires = "icon")]
+        icon_dark: Option<PathBuf>,
     },
     /// Approve exactly the revision printed by register/list.
     Approve {
@@ -195,7 +198,11 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Command::Uploads { policy } => return uploads_policy(&data_dir, policy.as_deref()),
-        Command::Register { manifest, icon } => register_control(&manifest, icon.as_deref())?,
+        Command::Register {
+            manifest,
+            icon,
+            icon_dark,
+        } => register_control(&manifest, icon.as_deref(), icon_dark.as_deref())?,
         Command::Approve {
             id,
             revision,
@@ -302,10 +309,19 @@ async fn finish_output(
     Ok(())
 }
 
-fn register_control(path: &std::path::Path, icon: Option<&std::path::Path>) -> Result<Control> {
+fn register_control(
+    path: &std::path::Path,
+    icon: Option<&std::path::Path>,
+    icon_dark: Option<&std::path::Path>,
+) -> Result<Control> {
     let mut manifest: Manifest = serde_json::from_slice(&std::fs::read(path)?)?;
     if let Some(path) = icon {
-        manifest.icon = Some(xlatch_core::icon::Icon::from_file(path)?);
+        let icon = xlatch_core::icon::Icon::from_file(path)?;
+        manifest.icon = Some(if let Some(dark) = icon_dark {
+            icon.with_dark_file(dark)?
+        } else {
+            icon
+        });
     }
     Ok(Control::Register { manifest })
 }

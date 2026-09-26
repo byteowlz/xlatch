@@ -84,7 +84,7 @@ impl Manifest {
         );
         ensure!(self.description.len() <= 4000, "description too long");
         if let Some(icon) = &self.icon {
-            icon.png_bytes()?;
+            icon.validate()?;
         }
         ensure!(
             !self.accepts.is_empty() && self.accepts.len() <= 16,

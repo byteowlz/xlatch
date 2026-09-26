@@ -252,8 +252,13 @@ extension ClientError {
 
 struct ActionIcon: Codable, Hashable {
     let png_base64: String
-    var image: UIImage? {
-        guard png_base64.count <= 175000, let data = Data(base64Encoded: png_base64), data.count <= 131072,
+    var dark_png_base64: String? = nil
+    var image: UIImage? { decode(png_base64) }
+    func image(for colorScheme: ColorScheme) -> UIImage? {
+        decode(colorScheme == .dark ? dark_png_base64 ?? png_base64 : png_base64)
+    }
+    private func decode(_ encoded: String) -> UIImage? {
+        guard encoded.count <= 175000, let data = Data(base64Encoded: encoded), data.count <= 131072,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -291,11 +296,12 @@ struct CapabilityIcon: View {
     let icon: ActionIcon?
     var override: ActionIconOverride? = nil
     var size: CGFloat = 32
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         Group {
-            if let image = override?.image?.image { Image(uiImage: image).resizable().scaledToFit() }
+            if let image = override?.image?.image(for: colorScheme) { Image(uiImage: image).resizable().scaledToFit() }
             else if let systemName = override?.systemName { Image(systemName: systemName).resizable().scaledToFit().foregroundStyle(.tint) }
-            else if let image = icon?.image { Image(uiImage: image).resizable().scaledToFit() }
+            else if let image = icon?.image(for: colorScheme) { Image(uiImage: image).resizable().scaledToFit() }
             else { Image(systemName: "bolt.fill").foregroundStyle(.tint) }
         }.frame(width: size, height: size).accessibilityHidden(true)
     }

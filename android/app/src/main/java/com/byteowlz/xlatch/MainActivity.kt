@@ -648,7 +648,10 @@ private fun CodeDialog(
 
 @Composable
 private fun ActionIcon(manifest: JSONObject) {
-    val encoded = manifest.optJSONObject("icon")?.optString("png_base64")
+    val icon = manifest.optJSONObject("icon")
+    val encoded = if (isSystemInDarkTheme()) {
+        icon?.optString("dark_png_base64")?.takeIf { it.isNotBlank() } ?: icon?.optString("png_base64")
+    } else icon?.optString("png_base64")
     val bitmap = remember(encoded) {
         runCatching {
             require(encoded != null && encoded.length <= 175000)

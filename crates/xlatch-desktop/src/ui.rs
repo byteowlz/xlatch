@@ -435,7 +435,10 @@ impl Desktop {
                                             .child(
                                                 h_flex()
                                                     .gap_2()
-                                                    .child(action_icon(&capability))
+                                                    .child(action_icon(
+                                                        &capability,
+                                                        theme.is_dark(),
+                                                    ))
                                                     .child(SharedString::from(
                                                         capability.manifest.title.clone(),
                                                     )),
@@ -696,12 +699,12 @@ impl Render for Desktop {
     }
 }
 
-fn action_icon(capability: &Capability) -> gpui_kit::AnyElement {
+fn action_icon(capability: &Capability, dark: bool) -> gpui_kit::AnyElement {
     if let Some(bytes) = capability
         .manifest
         .icon
         .as_ref()
-        .and_then(|icon| icon.png_bytes().ok())
+        .and_then(|icon| icon.png_bytes_for(dark).ok())
     {
         gpui_kit::img(std::sync::Arc::new(gpui_kit::Image::from_bytes(
             gpui_kit::ImageFormat::Png,

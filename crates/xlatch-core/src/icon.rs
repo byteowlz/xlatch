@@ -14,17 +14,45 @@ use std::{
 pub struct Icon {
     /// Base64 PNG, at most 128 `KiB` and 256 pixels on either axis.
     pub png_base64: String,
+    /// Optional dark-surface variant. Older clients ignore it and use the base image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dark_png_base64: Option<String>,
 }
 impl Icon {
     /// Decode and validate untrusted icon bytes with allocation and dimension limits.
     /// # Errors
     /// Rejects malformed or oversized images.
     pub fn png_bytes(&self) -> Result<Vec<u8>> {
-        ensure!(self.png_base64.len() <= 175_000, "icon exceeds 128 KiB");
-        let bytes = STANDARD.decode(&self.png_base64)?;
-        ensure!(bytes.len() <= 128 * 1024, "icon exceeds 128 KiB");
-        decode_png(&bytes, 256)?;
-        Ok(bytes)
+        decode_bounded_png(&self.png_base64)
+    }
+    /// Decode the best image for the requested surface appearance.
+    /// # Errors
+    /// Rejects malformed or oversized images.
+    pub fn png_bytes_for(&self, dark: bool) -> Result<Vec<u8>> {
+        decode_bounded_png(
+            self.dark_png_base64
+                .as_deref()
+                .filter(|_| dark)
+                .unwrap_or(&self.png_base64),
+        )
+    }
+    /// Validate every supplied appearance variant.
+    /// # Errors
+    /// Rejects malformed or oversized images.
+    pub fn validate(&self) -> Result<()> {
+        self.png_bytes()?;
+        if let Some(dark) = &self.dark_png_base64 {
+            decode_bounded_png(dark)?;
+        }
+        Ok(())
+    }
+    /// Add a dark-surface variant from a local SVG or PNG source.
+    /// # Errors
+    /// Rejects unsupported SVG features, malformed images and excessive source sizes.
+    pub fn with_dark_file(mut self, path: &Path) -> Result<Self> {
+        self.dark_png_base64 = Some(Self::from_file(path)?.png_base64);
+        self.validate()?;
+        Ok(self)
     }
     /// Convert a local SVG or PNG source into a bounded native-client image.
     /// # Errors
@@ -45,10 +73,18 @@ impl Icon {
         };
         let icon = Self {
             png_base64: STANDARD.encode(png),
+            dark_png_base64: None,
         };
-        icon.png_bytes()?;
+        icon.validate()?;
         Ok(icon)
     }
+}
+fn decode_bounded_png(encoded: &str) -> Result<Vec<u8>> {
+    ensure!(encoded.len() <= 175_000, "icon exceeds 128 KiB");
+    let bytes = STANDARD.decode(encoded)?;
+    ensure!(bytes.len() <= 128 * 1024, "icon exceeds 128 KiB");
+    decode_png(&bytes, 256)?;
+    Ok(bytes)
 }
 fn decode_png(bytes: &[u8], side: u32) -> Result<image::DynamicImage> {
     let mut reader = ImageReader::with_format(Cursor::new(bytes), ImageFormat::Png);

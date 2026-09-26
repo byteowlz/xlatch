@@ -53,12 +53,17 @@ final class OutboxTests: XCTestCase {
             UIColor.systemTeal.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
         }
+        let darkData = renderer.pngData { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
         var manifest = item.capability.manifest
-        manifest.icon = ActionIcon(png_base64: data.base64EncodedString())
+        manifest.icon = ActionIcon(png_base64: data.base64EncodedString(), dark_png_base64: darkData.base64EncodedString())
         let action = Capability(manifest: manifest, revision: "icon-revision", status: "active")
         let decoded = try JSONDecoder().decode(Capability.self, from: JSONEncoder().encode(action))
         XCTAssertEqual(decoded, action)
         XCTAssertNotNil(decoded.manifest.icon?.image)
+        XCTAssertNotNil(decoded.manifest.icon?.image(for: .dark))
         XCTAssertNil(ActionIcon(png_base64: "invalid").image)
         XCTAssertNil(ActionIcon(png_base64: String(repeating: "A", count: 175001)).image)
         XCTAssertNil(item.capability.manifest.icon)

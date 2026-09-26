@@ -1568,7 +1568,12 @@ fn icons_preserve_legacy_revisions_and_reject_active_svg_content() -> Result<()>
         &path,
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#008877" d="M2 2h20v20H2z"/></svg>"##,
     )?;
-    let icon = Icon::from_file(&path)?;
+    let dark_path = fixture.0.join("icon-dark.svg");
+    std::fs::write(
+        &dark_path,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ffffff" d="M2 2h20v20H2z"/></svg>"##,
+    )?;
+    let icon = Icon::from_file(&path)?.with_dark_file(&dark_path)?;
     let png = icon.png_bytes()?;
     assert!(png.starts_with(b"\x89PNG"));
     assert_eq!(
@@ -1578,11 +1583,19 @@ fn icons_preserve_legacy_revisions_and_reject_active_svg_content() -> Result<()>
             .0,
         [0, 136, 119, 255]
     );
+    assert_eq!(
+        image::load_from_memory(&icon.png_bytes_for(true)?)?
+            .to_rgba8()
+            .get_pixel(64, 64)
+            .0,
+        [255, 255, 255, 255]
+    );
     let mut too_large = std::io::Cursor::new(Vec::new());
     image::DynamicImage::new_rgba8(257, 1).write_to(&mut too_large, image::ImageFormat::Png)?;
     assert!(
         Icon {
-            png_base64: STANDARD.encode(too_large.into_inner())
+            png_base64: STANDARD.encode(too_large.into_inner()),
+            dark_png_base64: None,
         }
         .png_bytes()
         .is_err()
@@ -1601,14 +1614,16 @@ fn icons_preserve_legacy_revisions_and_reject_active_svg_content() -> Result<()>
     }
     assert!(
         Icon {
-            png_base64: "not png".into()
+            png_base64: "not png".into(),
+            dark_png_base64: None,
         }
         .png_bytes()
         .is_err()
     );
     assert!(
         Icon {
-            png_base64: "A".repeat(175_001)
+            png_base64: "A".repeat(175_001),
+            dark_png_base64: None,
         }
         .png_bytes()
         .is_err()
