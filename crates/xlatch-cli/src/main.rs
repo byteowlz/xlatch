@@ -50,7 +50,27 @@ enum DeviceCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum LaterCommand {
+    /// List parked items without their content bodies.
+    List,
+    /// Read one item without removing it; files are copied into a local directory.
+    Read {
+        id: String,
+        /// Existing destination directory for file content.
+        #[arg(long)]
+        directory: Option<PathBuf>,
+    },
+    /// Remove one item after it has been handled.
+    Remove { id: String },
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
+    /// Retrieve content saved for later.
+    Later {
+        #[command(subcommand)]
+        command: LaterCommand,
+    },
     /// Inspect upload limits, or apply a JSON policy file (trusted operator).
     Uploads {
         #[arg(long)]
@@ -178,6 +198,7 @@ async fn main() -> Result<()> {
     let control_dir = cli.control_dir.unwrap_or_else(|| data_dir.clone());
     let mut wait_for = None;
     let control = match cli.command {
+        Command::Later { command } => later_control(command)?,
         Command::Compose(options) => return compose::dispatch(&control_dir, options).await,
         Command::History { command } => return history::dispatch(&data_dir, command),
         Command::Identity => return pairing::identity(&control_dir, cli.json).await,
@@ -353,4 +374,28 @@ fn device_control(command: DeviceCommand) -> Control {
             change: xlatch_core::device_management::Change::Remove,
         },
     }
+}
+
+fn later_control(command: LaterCommand) -> Result<Control> {
+    Ok(match command {
+        LaterCommand::List => Control::Rpc {
+            request: Request::Parked,
+        },
+        LaterCommand::Read { id, directory } => {
+            let directory = directory.map_or_else(
+                || {
+                    dirs::home_dir()
+                        .context("home directory unavailable")
+                        .map(|home| home.join("xlatch/incoming"))
+                },
+                Ok,
+            )?;
+            std::fs::create_dir_all(&directory)?;
+            Control::ParkedRead {
+                id,
+                directory: std::fs::canonicalize(directory)?,
+            }
+        }
+        LaterCommand::Remove { id } => Control::ParkedDelete { id },
+    })
 }

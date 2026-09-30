@@ -10904,6 +10904,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "clap_complete",
+ "dirs 6.0.0",
  "env_logger",
  "fs2",
  "log",

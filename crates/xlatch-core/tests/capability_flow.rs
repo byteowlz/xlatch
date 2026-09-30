@@ -577,6 +577,11 @@ fn protected_control_rejects_operator_shortcuts_and_private_worker_access() {
         },
         Control::Revoke { id: "d".into() },
         Control::EnrollmentBootstrap { device: "d".into() },
+        Control::ParkedRead {
+            id: "p".into(),
+            directory: "/tmp".into(),
+        },
+        Control::ParkedDelete { id: "p".into() },
         Control::Rpc {
             request: Request::Jobs,
         },
@@ -2069,6 +2074,11 @@ fn parked_content_is_owner_scoped_and_dispatches_once() -> Result<()> {
         item
     );
     assert_eq!(store.parked_candidates(&phone, &id)?[0].manifest.id, "echo");
+    let export = fixture.0.join("later");
+    std::fs::create_dir(&export)?;
+    let export = std::fs::canonicalize(export)?;
+    assert_eq!(store.read_parked(&phone, &id, &export)?.input, input);
+    assert_eq!(store.parked(&phone)?.len(), 1, "reading must not consume");
 
     let job = store.dispatch_parked(&phone, &id, "echo", &capability.revision)?;
     assert!(store.parked(&phone)?.is_empty());
@@ -2077,5 +2087,40 @@ fn parked_content_is_owner_scoped_and_dispatches_once() -> Result<()> {
         store.dispatch_parked(&phone, &id, "echo", &capability.revision)?,
         job
     );
+    Ok(())
+}
+
+#[test]
+fn parked_file_read_materializes_safe_bytes_without_consuming() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let store = fixture.store()?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let input = json!({
+        "mime_type":"application/octet-stream",
+        "file":{
+            "name":"../../notes.bin",
+            "mime_type":"application/octet-stream",
+            "data_base64":STANDARD.encode(b"parked bytes")
+        }
+    });
+    store.park(
+        "local",
+        &id,
+        "notes.bin",
+        "application/octet-stream",
+        &input,
+    )?;
+    let export = fixture.0.join("later-file");
+    std::fs::create_dir(&export)?;
+    let export = std::fs::canonicalize(export)?;
+    let content = store.read_parked("local", &id, &export)?;
+    let path = content.input["file"]["path"]
+        .as_str()
+        .context("materialized path")?;
+    assert_eq!(std::fs::read(path)?, b"parked bytes");
+    assert_eq!(content.input["file"]["name"], "notes.bin");
+    assert_eq!(store.parked("local")?.len(), 1);
+    store.delete_parked("local", &id)?;
+    assert!(store.parked("local")?.is_empty());
     Ok(())
 }

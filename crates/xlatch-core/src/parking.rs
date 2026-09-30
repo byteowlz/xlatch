@@ -5,9 +5,11 @@ use crate::{
     store::{Store, now},
 };
 use anyhow::{Context, Result, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+use std::{io::Write as _, path::Path};
 
 /// Small list representation; stored content is returned only through dispatch.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -20,6 +22,15 @@ pub struct ParkedItem {
     pub mime_type: String,
     /// Unix creation time.
     pub created_at: i64,
+}
+
+/// Parked content prepared for a trusted local consumer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParkedContent {
+    /// List metadata for the source item.
+    pub item: ParkedItem,
+    /// Original text input, or file metadata with an executor-local path.
+    pub input: Value,
 }
 
 struct StoredParkedItem {
@@ -234,6 +245,75 @@ impl Store {
         Ok(())
     }
 
+    /// Read parked content for a trusted local consumer without removing it.
+    ///
+    /// Files are copied into an explicit canonical directory and represented by
+    /// a local path; arbitrary-size upload bytes never enter the control response.
+    ///
+    /// # Errors
+    /// Rejects unavailable items, unsafe destinations, and malformed file content.
+    pub fn read_parked(&self, owner: &str, id: &str, directory: &Path) -> Result<ParkedContent> {
+        let parked = self.parked_item(owner, id)?;
+        if parked.input.get("file").is_none() {
+            return Ok(ParkedContent {
+                item: parked.item,
+                input: parked.input,
+            });
+        }
+        ensure!(
+            std::fs::canonicalize(directory)? == directory,
+            "parked export directory must be canonical"
+        );
+        let file = parked.input.get("file").context("file metadata missing")?;
+        let raw_name = file["name"].as_str().context("file name missing")?;
+        let name = safe_name(raw_name)?;
+        let mime_type = file["mime_type"]
+            .as_str()
+            .unwrap_or(&parked.item.mime_type)
+            .to_owned();
+        let (path, mut output) = create_export(directory, &name)?;
+        let mut pending = PendingExport {
+            path: path.clone(),
+            complete: false,
+        };
+        let bytes = if let Some(upload_id) = file["artifact_id"].as_str() {
+            let mut statement = self
+                .conn
+                .prepare("SELECT data FROM upload_chunks WHERE upload_id=?1 ORDER BY offset")?;
+            let mut rows = statement.query([upload_id])?;
+            let mut total = 0u64;
+            while let Some(row) = rows.next()? {
+                let chunk: Vec<u8> = row.get(0)?;
+                output.write_all(&chunk)?;
+                total += chunk.len() as u64;
+            }
+            let expected = file["size"].as_u64().context("file size missing")?;
+            ensure!(total == expected, "parked upload is incomplete");
+            total
+        } else {
+            let data = STANDARD.decode(
+                file["data_base64"]
+                    .as_str()
+                    .context("inline file data missing")?,
+            )?;
+            output.write_all(&data)?;
+            data.len() as u64
+        };
+        output.sync_all()?;
+        pending.complete = true;
+        let mut input = parked.input;
+        input["file"] = json!({
+            "name": name,
+            "mime_type": mime_type,
+            "size": bytes,
+            "path": path,
+        });
+        Ok(ParkedContent {
+            item: parked.item,
+            input,
+        })
+    }
+
     fn parked_item(&self, owner: &str, id: &str) -> Result<StoredParkedItem> {
         self.conn
             .query_row(
@@ -268,4 +348,67 @@ fn mime_matches(accepted: &str, actual: &str) -> bool {
         || accepted
             .strip_suffix("/*")
             .is_some_and(|prefix| actual.starts_with(&format!("{prefix}/")))
+}
+
+fn safe_name(raw: &str) -> Result<String> {
+    let name = raw
+        .rsplit(['/', '\\'])
+        .next()
+        .context("file name missing")?;
+    ensure!(
+        !name.is_empty()
+            && name != "."
+            && name != ".."
+            && name.len() <= 180
+            && !name.chars().any(char::is_control),
+        "invalid file name"
+    );
+    Ok(name.to_owned())
+}
+
+fn create_export(directory: &Path, name: &str) -> Result<(std::path::PathBuf, std::fs::File)> {
+    for suffix in 0..1000 {
+        let filename = if suffix == 0 {
+            name.to_owned()
+        } else {
+            let path = Path::new(name);
+            let stem = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .context("invalid file name")?;
+            path.extension()
+                .and_then(|value| value.to_str())
+                .map_or_else(
+                    || format!("{stem}-{suffix}"),
+                    |extension| format!("{stem}-{suffix}.{extension}"),
+                )
+        };
+        let path = directory.join(filename);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    anyhow::bail!("too many parked export filename collisions")
+}
+
+struct PendingExport {
+    path: std::path::PathBuf,
+    complete: bool,
+}
+
+impl Drop for PendingExport {
+    fn drop(&mut self) {
+        if !self.complete {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }

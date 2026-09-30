@@ -21,6 +21,12 @@ Use `xlatch service run` for foreground execution and `xlatch service start|stop
 
 Use a stable idempotency key when retrying the same logical invocation. A timeout is not proof that the job failed. Retrieve its status before starting another operation with a new key.
 
+### Save for Later retrieval
+
+`xlatch later list` lists content parked by any paired client. `xlatch later read ID --directory ~/xlatch/incoming` returns text/links directly and materializes files into that explicit local directory. Reading is non-destructive; call `xlatch later remove ID` only after the receiving tool has accepted the content. A Pi session with the `pi-xlatch-session` extension can use `/xlatch later` or the `xlatch_later` tool without claiming a live-share slot.
+
+These local operator commands are available in user mode. Protected mode deliberately denies them on the executor control socket; future protected retrieval needs a scoped agent credential or signed delegation rather than weakening the broker boundary.
+
 ## Protected mode
 
 Check the service mode before choosing an integration workflow. User mode gives same-UID local agents operator authority. Protected mode runs the broker under a dedicated service account and executes host actions through a separate, unprivileged executor account. Broker state, trusted keys, binaries and service configuration must remain inaccessible for modification by agents; biometric approval alone does not protect a user-owned daemon.

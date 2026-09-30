@@ -69,6 +69,18 @@ pub enum Control {
         /// Device identifier.
         id: String,
     },
+    /// Read a parked item as the trusted local operator without consuming it.
+    ParkedRead {
+        /// Parked item identifier.
+        id: String,
+        /// Canonical directory used to materialize file content.
+        directory: std::path::PathBuf,
+    },
+    /// Remove a parked item after a local consumer has accepted it.
+    ParkedDelete {
+        /// Parked item identifier.
+        id: String,
+    },
     /// Execute a core request as the local operator.
     Rpc {
         /// Transport-neutral request.
@@ -196,6 +208,13 @@ async fn handle(
             Control::Revoke { id } => {
                 store.revoke(&id)?;
                 Ok(json!({"revoked":id}))
+            }
+            Control::ParkedRead { id, directory } => Ok(serde_json::to_value(
+                store.read_parked("local", &id, &directory)?,
+            )?),
+            Control::ParkedDelete { id } => {
+                store.delete_parked("local", &id)?;
+                Ok(json!({"deleted":id}))
             }
             Control::Rpc { request } => service::dispatch(&mut store, "local", request),
         }
