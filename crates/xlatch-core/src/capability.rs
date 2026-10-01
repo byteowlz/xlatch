@@ -294,6 +294,9 @@ pub enum Request {
         mime_type: String,
         /// Original typed share input.
         input: Value,
+        /// Optional exact granted action used to prepare cached context.
+        #[serde(default)]
+        preparation: Option<crate::chain::Reference>,
     },
     /// List caller-owned parked content without large bodies.
     Parked,

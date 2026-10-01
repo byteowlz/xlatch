@@ -28,12 +28,19 @@ Timestamps are Unix seconds with 60 seconds of clock skew. Nonces are 16–120 A
 |---|---|---|
 | `discover` | none | Active capabilities visible to the device, including schemas and revision |
 | `invoke` | `capability_id`, `revision`, `input`, `idempotency_key` | Persisted job |
+| `park` | `id`, `label`, `mime_type`, `input`, optional exact `preparation` reference | Parked item and preparation status |
+| `parked` | none | Owned parked item summaries |
+| `parked_candidates` | `id` | Compatible active granted capabilities |
+| `dispatch_parked` | `id`, `capability_id`, `revision` | Persisted final-target job; consumes item |
+| `delete_parked` | `id` | Deleted item identity |
 | `jobs` | none | 100 most recent owned job summaries |
 | `job` | `id` | Owned job and result |
 | `cancel` | `id` | Updated job |
 | `events` | `after` | Up to 100 owned events in sequence order |
 
 HTTP failures use an appropriate non-2xx status and `{error:string}`. Invocations are durable asynchronous jobs; CLI `--wait` offers synchronous waiting over the same job. Result responses omit the original input to avoid duplicating uploaded files. Requests are bounded to 8 MiB; serialized results to 6 MiB. Native file input/output is capped at 4 MiB, represented by `{file:{name,mime_type,data_base64},mime_type}`. Text/links use `{text,mime_type}`. Larger streaming artifacts are future work.
+
+`preparation` uses `{capability_id,revision}` and is authorized exactly like any other invocation. Its job is linked to the parked item. A successful typed result is exposed to trusted local retrieval as `prepared`; queued or failed preparation leaves the original parked input available and unchanged. Preparation does not select or grant the final target.
 
 ## Local control and activation
 

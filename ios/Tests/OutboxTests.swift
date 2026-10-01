@@ -206,12 +206,15 @@ final class OutboxTests: XCTestCase {
         let otherDevice = UUID().uuidString
         ShareActionPreferences.saveOrder([second.id, first.id], deviceID: connection.deviceID)
         ShareActionPreferences.saveIcon(.system("waveform"), for: second.id, deviceID: connection.deviceID)
+        ShareActionPreferences.saveForLaterPreparation(second.id, deviceID: connection.deviceID)
         defer {
             ShareActionPreferences.saveOrder([], deviceID: connection.deviceID)
             ShareActionPreferences.saveIcon(nil, for: second.id, deviceID: connection.deviceID)
+            ShareActionPreferences.saveForLaterPreparation(nil, deviceID: connection.deviceID)
         }
         XCTAssertEqual(ShareActionPreferences.ordered([first, second], deviceID: connection.deviceID).map(\.id), [second.id, first.id])
         XCTAssertEqual(ShareActionPreferences.icon(for: second.id, deviceID: connection.deviceID), .system("waveform"))
+        XCTAssertEqual(ShareActionPreferences.saveForLaterPreparation(deviceID: connection.deviceID), second.id)
         XCTAssertEqual(ShareActionPreferences.ordered([first, second], deviceID: otherDevice).map(\.id), [first.id, second.id])
         XCTAssertNil(ShareActionPreferences.icon(for: second.id, deviceID: otherDevice))
     }

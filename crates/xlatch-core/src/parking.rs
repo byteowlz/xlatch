@@ -2,6 +2,7 @@
 
 use crate::{
     capability::{Capability, Job, MAX_BYTES},
+    chain::Reference,
     store::{Store, now},
 };
 use anyhow::{Context, Result, ensure};
@@ -22,6 +23,26 @@ pub struct ParkedItem {
     pub mime_type: String,
     /// Unix creation time.
     pub created_at: i64,
+    /// Optional durable preparation associated with this item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation: Option<ParkedPreparation>,
+}
+
+/// Current state of a client-selected preparation action.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParkedPreparation {
+    /// Exact capability selected by the client.
+    pub capability_id: String,
+    /// Exact granted revision selected by the client.
+    pub revision: String,
+    /// `queued`, `running`, `succeeded`, `failed`, or `cancelled`.
+    pub status: String,
+    /// Durable preparation job when it was accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    /// Safe failure detail when preparation could not be accepted or completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Parked content prepared for a trusted local consumer.
@@ -31,6 +52,9 @@ pub struct ParkedContent {
     pub item: ParkedItem,
     /// Original text input, or file metadata with an executor-local path.
     pub input: Value,
+    /// Successful typed preparation output, when ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared: Option<Value>,
 }
 
 struct StoredParkedItem {
@@ -39,6 +63,28 @@ struct StoredParkedItem {
 }
 
 impl Store {
+    /// Save content and optionally enqueue an exact granted preparation action.
+    ///
+    /// Preparation acceptance or execution failure never removes the original item.
+    ///
+    /// # Errors
+    /// Rejects malformed parked content or a conflicting retry identity.
+    pub fn park_with_preparation(
+        &mut self,
+        owner: &str,
+        id: &str,
+        label: &str,
+        mime_type: &str,
+        input: &Value,
+        preparation: Option<&Reference>,
+    ) -> Result<ParkedItem> {
+        self.park(owner, id, label, mime_type, input)?;
+        let Some(preparation) = preparation else {
+            return Ok(self.parked_item(owner, id)?.item);
+        };
+        self.prepare_parked(owner, id, preparation)
+    }
+
     /// Save content without selecting or invoking a capability.
     ///
     /// # Errors
@@ -131,7 +177,53 @@ impl Store {
             label: label.to_owned(),
             mime_type: mime_type.to_owned(),
             created_at,
+            preparation: None,
         })
+    }
+
+    fn prepare_parked(
+        &mut self,
+        owner: &str,
+        id: &str,
+        preparation: &Reference,
+    ) -> Result<ParkedItem> {
+        let parked = self.parked_item(owner, id)?;
+        if let Some(existing) = &parked.item.preparation {
+            ensure!(
+                existing.capability_id == preparation.capability_id
+                    && existing.revision == preparation.revision,
+                "parked item id already used with different preparation"
+            );
+            if existing.job_id.is_some() {
+                return Ok(parked.item);
+            }
+        }
+        self.conn.execute(
+            "UPDATE parked_items SET preparation_capability_id=?1,preparation_revision=?2,preparation_error=NULL WHERE id=?3 AND owner=?4",
+            params![preparation.capability_id, preparation.revision, id, owner],
+        )?;
+        let outcome = self.invoke(
+            owner,
+            &preparation.capability_id,
+            &preparation.revision,
+            &parked.input,
+            &format!("park-prepare:{id}"),
+        );
+        match outcome {
+            Ok(job) => {
+                self.conn.execute(
+                    "UPDATE parked_items SET preparation_job_id=?1,preparation_error=NULL WHERE id=?2 AND owner=?3",
+                    params![job.id, id, owner],
+                )?;
+            }
+            Err(error) => {
+                self.conn.execute(
+                    "UPDATE parked_items SET preparation_error=?1 WHERE id=?2 AND owner=?3",
+                    params![error.to_string(), id, owner],
+                )?;
+            }
+        }
+        Ok(self.parked_item(owner, id)?.item)
     }
 
     /// List parked content without returning potentially large bodies.
@@ -140,7 +232,7 @@ impl Store {
     /// Returns storage errors.
     pub fn parked(&self, owner: &str) -> Result<Vec<ParkedItem>> {
         let mut statement = self.conn.prepare(
-            "SELECT id,label,mime_type,created_at FROM parked_items WHERE (owner=?1 OR ?1='local') ORDER BY created_at DESC,rowid DESC LIMIT 1000",
+            "SELECT p.id,p.label,p.mime_type,p.created_at,p.preparation_capability_id,p.preparation_revision,p.preparation_job_id,COALESCE(j.status,CASE WHEN p.preparation_capability_id IS NOT NULL THEN 'failed' END),COALESCE(j.error,p.preparation_error) FROM parked_items p LEFT JOIN jobs j ON j.id=p.preparation_job_id WHERE (p.owner=?1 OR ?1='local') ORDER BY p.created_at DESC,p.rowid DESC LIMIT 1000",
         )?;
         Ok(statement
             .query_map([owner], |row| {
@@ -149,6 +241,7 @@ impl Store {
                     label: row.get(1)?,
                     mime_type: row.get(2)?,
                     created_at: row.get(3)?,
+                    preparation: preparation_from_row(row, 4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?)
@@ -255,9 +348,11 @@ impl Store {
     pub fn read_parked(&self, owner: &str, id: &str, directory: &Path) -> Result<ParkedContent> {
         let parked = self.parked_item(owner, id)?;
         if parked.input.get("file").is_none() {
+            let prepared = self.prepared_result(&parked.item)?;
             return Ok(ParkedContent {
                 item: parked.item,
                 input: parked.input,
+                prepared,
             });
         }
         ensure!(
@@ -309,15 +404,29 @@ impl Store {
             "path": path,
         });
         Ok(ParkedContent {
+            prepared: self.prepared_result(&parked.item)?,
             item: parked.item,
             input,
         })
     }
 
+    fn prepared_result(&self, item: &ParkedItem) -> Result<Option<Value>> {
+        let Some(preparation) = &item.preparation else {
+            return Ok(None);
+        };
+        let Some(job_id) = &preparation.job_id else {
+            return Ok(None);
+        };
+        if preparation.status != "succeeded" {
+            return Ok(None);
+        }
+        Ok(self.job("local", job_id)?.result)
+    }
+
     fn parked_item(&self, owner: &str, id: &str) -> Result<StoredParkedItem> {
         self.conn
             .query_row(
-                "SELECT id,label,mime_type,input,created_at FROM parked_items WHERE id=?1 AND (owner=?2 OR ?2='local')",
+                "SELECT p.id,p.label,p.mime_type,p.input,p.created_at,p.preparation_capability_id,p.preparation_revision,p.preparation_job_id,COALESCE(j.status,CASE WHEN p.preparation_capability_id IS NOT NULL THEN 'failed' END),COALESCE(j.error,p.preparation_error) FROM parked_items p LEFT JOIN jobs j ON j.id=p.preparation_job_id WHERE p.id=?1 AND (p.owner=?2 OR ?2='local')",
                 params![id, owner],
                 |row| {
                     let input: String = row.get(3)?;
@@ -327,6 +436,7 @@ impl Store {
                             label: row.get(1)?,
                             mime_type: row.get(2)?,
                             created_at: row.get(4)?,
+                            preparation: preparation_from_row(row, 5)?,
                         },
                         input,
                     ))
@@ -340,6 +450,24 @@ impl Store {
                 })
             })
     }
+}
+
+fn preparation_from_row(
+    row: &rusqlite::Row<'_>,
+    start: usize,
+) -> rusqlite::Result<Option<ParkedPreparation>> {
+    let capability_id: Option<String> = row.get(start)?;
+    let revision: Option<String> = row.get(start + 1)?;
+    let job_id: Option<String> = row.get(start + 2)?;
+    let status: Option<String> = row.get(start + 3)?;
+    let error: Option<String> = row.get(start + 4)?;
+    Ok(capability_id.map(|capability_id| ParkedPreparation {
+        capability_id,
+        revision: revision.unwrap_or_default(),
+        job_id,
+        status: status.unwrap_or_else(|| "failed".to_owned()),
+        error,
+    }))
 }
 
 fn mime_matches(accepted: &str, actual: &str) -> bool {

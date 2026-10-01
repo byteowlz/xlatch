@@ -33,9 +33,15 @@ pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Valu
             label,
             mime_type,
             input,
-        } => Ok(serde_json::to_value(
-            store.park(owner, &id, &label, &mime_type, &input)?,
-        )?),
+            preparation,
+        } => Ok(serde_json::to_value(store.park_with_preparation(
+            owner,
+            &id,
+            &label,
+            &mime_type,
+            &input,
+            preparation.as_ref(),
+        )?)?),
         Request::Parked => Ok(serde_json::to_value(store.parked(owner)?)?),
         Request::ParkedCandidates { id } => {
             Ok(serde_json::to_value(store.parked_candidates(owner, &id)?)?)

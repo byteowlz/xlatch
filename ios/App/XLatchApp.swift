@@ -314,7 +314,13 @@ struct ParkedView: View {
                             Image(systemName: parkedSymbol(item.mime_type)).foregroundStyle(.tint).frame(width: 28)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(item.label).font(.headline).lineLimit(2)
-                                Text(item.created, style: .relative).font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 6) {
+                                    Text(item.created, style: .relative)
+                                    if let preparation = item.preparation {
+                                        Label(preparation.status == "succeeded" ? "Prepared" : preparation.status.capitalized,
+                                              systemImage: preparation.status == "succeeded" ? "checkmark.circle.fill" : "hourglass")
+                                    }
+                                }.font(.caption).foregroundStyle(.secondary)
                             }
                         }.padding(.vertical, 4)
                     }
@@ -359,6 +365,10 @@ struct ParkedItemView: View {
             Section("Saved content") {
                 Label(item.label, systemImage: parkedSymbol(item.mime_type)).lineLimit(4)
                 LabeledContent("Type", value: item.mime_type)
+                if let preparation = item.preparation {
+                    LabeledContent("Preparation", value: preparation.status == "succeeded" ? "Ready" : preparation.status.capitalized)
+                    if let failure = preparation.error { Text(failure).font(.footnote).foregroundStyle(.orange) }
+                }
             }
             if let error { Section { Text(error).foregroundStyle(.red) } }
             if loading { Section { ProgressView("Finding compatible actions…") } }
@@ -640,6 +650,21 @@ struct SettingsView: View {
                     if model.capabilities.isEmpty { Text("No actions granted to this phone yet.").foregroundStyle(.secondary) }
                 } header: { Text("Actions on this phone") } footer: {
                     Text("Tap an action to change its icon. Use Edit to reorder actions in the app, share sheet, chains and Shortcuts. Turning one off does not revoke its server permission or affect other devices.")
+                }
+                if let connection = model.connection {
+                    Section {
+                        Picker("Prepare saved URLs with", selection: Binding(
+                            get: { ShareActionPreferences.saveForLaterPreparation(deviceID: connection.deviceID) },
+                            set: { ShareActionPreferences.saveForLaterPreparation($0, deviceID: connection.deviceID) }
+                        )) {
+                            Text("Nothing").tag(String?.none)
+                            ForEach(model.orderedCapabilities.filter { $0.accepts("text/uri-list") }) { capability in
+                                Text(capability.manifest.title).tag(Optional(capability.id))
+                            }
+                        }
+                    } header: { Text("Save for Later") } footer: {
+                        Text("Optional. When you save a URL, xlatch runs the selected granted action in the background and keeps any successful typed result with the original item. Other content is saved unchanged.")
+                    }
                 }
                 Section("Notifications") {
                     Button("Enable result notifications") {

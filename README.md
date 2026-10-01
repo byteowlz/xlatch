@@ -34,4 +34,16 @@ xlatch service disable   # stop and disable automatic startup
 
 The source package is `xlatch` in `crates/xlatch-cli`. The separate `xlatch-api` executable has been removed. MCP remains an adapter in `xlatch-mcp`.
 
+## Save for Later
+
+The phone can park content on the server before choosing its final target. Retrieve it from the app, with `/xlatch later` in the Pi extension, or from a terminal:
+
+```sh
+xlatch later list
+xlatch later read ITEM_ID
+xlatch later remove ITEM_ID
+```
+
+Reading is non-destructive. Files are materialized under `~/xlatch/incoming` by default. A client may optionally associate any compatible granted action with Save for Later. xlatch runs that action as a durable preparation job and returns successful typed output as cached context alongside the untouched original item. The server has no built-in scraper or model dependency.
+
 See [testing](docs/testing.md), [protocol](docs/protocol.md), and [Oqto integration](docs/oqto-integration.md).

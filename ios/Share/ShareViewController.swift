@@ -132,8 +132,14 @@ final class ShareViewController: UIViewController {
             let input = try await client.upload(original, id: parkID) { [weak self] sent, total in
                 Task { @MainActor in self?.parkProgress = UploadProgress(sent: sent, total: total) }
             }
-            let _: ParkedItem = try await client.rpc(["op":"park", "id":parkID,
-                "label":String(input.label.prefix(500)), "mime_type":input.mime, "input":input.payload])
+            var request: [String: Any] = ["op":"park", "id":parkID,
+                "label":String(input.label.prefix(500)), "mime_type":input.mime, "input":input.payload]
+            if original.mime == "text/uri-list", let deviceID,
+               let selected = ShareActionPreferences.saveForLaterPreparation(deviceID: deviceID),
+               let capability = capabilities.first(where: { $0.id == selected && $0.accepts(original.mime) }) {
+                request["preparation"] = ["capability_id": capability.id, "revision": capability.revision]
+            }
+            let _: ParkedItem = try await client.rpc(request)
             if let localFile = original.localFile { try? FileManager.default.removeItem(at: localFile) }
             parked = true; sent = true
         } catch { self.error = error.localizedDescription }

@@ -25,6 +25,8 @@ Use a stable idempotency key when retrying the same logical invocation. A timeou
 
 `xlatch later list` lists content parked by any paired client. `xlatch later read ID --directory ~/xlatch/incoming` returns text/links directly and materializes files into that explicit local directory. Reading is non-destructive; call `xlatch later remove ID` only after the receiving tool has accepted the content. A Pi session with the `pi-xlatch-session` extension can use `/xlatch later` or the `xlatch_later` tool without claiming a live-share slot.
 
+A client may attach an optional exact `preparation` capability reference when parking. This is a normal granted action, not a built-in scraper: the client chooses any compatible action and xlatch links its durable job to the original parked item. Successful typed output is returned as `prepared` cached context; queued, failed or cancelled preparation never replaces or removes the original content. Do not re-run a successful preparation during retrieval.
+
 These local operator commands are available in user mode. Protected mode deliberately denies them on the executor control socket; future protected retrieval needs a scoped agent credential or signed delegation rather than weakening the broker boundary.
 
 ## Protected mode

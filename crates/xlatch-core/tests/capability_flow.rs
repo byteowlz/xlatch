@@ -2091,6 +2091,75 @@ fn parked_content_is_owner_scoped_and_dispatches_once() -> Result<()> {
 }
 
 #[test]
+fn parked_preparation_caches_typed_result_without_risking_original() -> Result<()> {
+    use xlatch_core::{
+        chain::Reference,
+        executor::{self, ExecutorRequest, Work},
+    };
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let mut prepare = manifest();
+    prepare.accepts = vec!["text/uri-list".into()];
+    prepare.input_schema = json!({
+        "type":"object",
+        "required":["text","mime_type"],
+        "properties":{"text":{"type":"string"},"mime_type":{"const":"text/uri-list"}},
+        "additionalProperties":false
+    });
+    let capability = store.register(&prepare)?;
+    store.approve("echo", &capability.revision, false)?;
+    let (phone, _) = pair(&mut store, 123)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let input = json!({"text":"https://example.com","mime_type":"text/uri-list"});
+    let reference = Reference {
+        capability_id: "echo".into(),
+        revision: capability.revision,
+    };
+
+    let item = store.park_with_preparation(
+        &phone,
+        &id,
+        "Example",
+        "text/uri-list",
+        &input,
+        Some(&reference),
+    )?;
+    assert_eq!(
+        item.preparation.as_ref().context("preparation")?.status,
+        "queued"
+    );
+    let export = std::fs::canonicalize(&fixture.0)?;
+    let pending = store.read_parked(&phone, &id, &export)?;
+    assert_eq!(pending.input, input);
+    assert_eq!(pending.prepared, None);
+
+    let work: Work =
+        serde_json::from_value(executor::dispatch(&mut store, ExecutorRequest::Claim)?)?;
+    executor::dispatch(
+        &mut store,
+        ExecutorRequest::Complete {
+            id: work.job.id,
+            lease: work.lease,
+            result: Some(json!({"text":"cached article"})),
+            error: None,
+        },
+    )?;
+    let ready = store.read_parked(&phone, &id, &export)?;
+    assert_eq!(ready.input, input);
+    assert_eq!(ready.prepared, Some(json!({"text":"cached article"})));
+    assert_eq!(
+        ready.item.preparation.context("preparation")?.status,
+        "succeeded"
+    );
+    assert_eq!(
+        store.parked(&phone)?.len(),
+        1,
+        "preparation must not consume"
+    );
+    Ok(())
+}
+
+#[test]
 fn parked_file_read_materializes_safe_bytes_without_consuming() -> Result<()> {
     let fixture = Fixture::new()?;
     let store = fixture.store()?;

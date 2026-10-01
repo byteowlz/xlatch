@@ -65,7 +65,16 @@ struct ParkedItem: Codable, Identifiable, Equatable {
     let label: String
     let mime_type: String
     let created_at: Int64
+    var preparation: ParkedPreparation? = nil
     var created: Date { Date(timeIntervalSince1970: TimeInterval(created_at)) }
+}
+
+struct ParkedPreparation: Codable, Equatable {
+    let capability_id: String
+    let revision: String
+    let status: String
+    var job_id: String? = nil
+    var error: String? = nil
 }
 
 struct CompositionStep: Codable, Identifiable {
@@ -230,6 +239,14 @@ enum ShareActionPreferences {
         settings.icons[capabilityID] = icon
         save(settings, deviceID: deviceID)
     }
+    static func saveForLaterPreparation(deviceID: String) -> String? {
+        presentation(deviceID: deviceID).saveForLaterPreparationID
+    }
+    static func saveForLaterPreparation(_ capabilityID: String?, deviceID: String) {
+        var settings = presentation(deviceID: deviceID)
+        settings.saveForLaterPreparationID = capabilityID
+        save(settings, deviceID: deviceID)
+    }
     private static func presentation(deviceID: String) -> ActionPresentationSettings {
         guard let data = UserDefaults(suiteName: suite)?.data(forKey: "action-presentation.\(deviceID)"),
               let settings = try? JSONDecoder().decode(ActionPresentationSettings.self, from: data) else { return ActionPresentationSettings() }
@@ -244,6 +261,7 @@ enum ShareActionPreferences {
 private struct ActionPresentationSettings: Codable {
     var order: [String] = []
     var icons: [String: ActionIconOverride] = [:]
+    var saveForLaterPreparationID: String?
 }
 
 extension ClientError {
