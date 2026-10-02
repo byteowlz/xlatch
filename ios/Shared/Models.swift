@@ -158,6 +158,10 @@ struct Connection: Codable {
     var serverID: String? = nil
     var approvalKeyID: String? = nil
     var keyPin: String? = nil
+    var id: String { serverID ?? "\(pin):\(deviceID)" }
+    var displayName: String {
+        URL(string: url)?.host ?? url
+    }
 }
 
 enum ClientError: LocalizedError {

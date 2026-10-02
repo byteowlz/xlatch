@@ -20,6 +20,8 @@ final class ShareViewController: UIViewController {
     @Published var includePageText = false
     var content: ShareInput? { includePageText ? pageInput ?? input : input }
     @Published var capabilities: [Capability] = APIClient.cachedCapabilities()
+    @Published var connections: [Connection] = []
+    @Published var connection: Connection?
     @Published var disabledActionIDs: Set<String> = []
     @Published var deviceID: String?
     @Published var chain: [Capability] = []
@@ -59,10 +61,27 @@ final class ShareViewController: UIViewController {
                 pageInput = nil
                 input = try await ShareContentLoader.load(provider)
             }
+            connections = try CredentialStore.loadAll()
             guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
+            self.connection = connection
             deviceID = connection.deviceID
             disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
             capabilities = try await APIClient(connection: connection).capabilities()
+        } catch { self.error = error.localizedDescription }
+    }
+    func selectServer(_ id: String) async {
+        guard connection?.id != id, sending == nil else { return }
+        loading = true; error = nil; clearChain()
+        defer { loading = false }
+        do {
+            try CredentialStore.select(id)
+            connections = try CredentialStore.loadAll()
+            guard let connection = try CredentialStore.load() else { throw ClientError.message("This server is no longer paired.") }
+            self.connection = connection
+            deviceID = connection.deviceID
+            disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
+            let cached = APIClient.cachedCapabilities(for: connection)
+            capabilities = cached.isEmpty ? try await APIClient(connection: connection).capabilities() : cached
         } catch { self.error = error.localizedDescription }
     }
     var stepReferences: [[String: String]] { chain.map { ["capability_id": $0.id, "revision": $0.revision] } }
@@ -197,6 +216,18 @@ struct ShareView: View {
     }
     private var actionList: some View {
         List {
+            if model.connections.count > 1 {
+                Section("Server") {
+                    Picker("Send with", selection: Binding(
+                        get: { model.connection?.id ?? "" },
+                        set: { id in Task { await model.selectServer(id) } }
+                    )) {
+                        ForEach(model.connections, id: \.id) { connection in
+                            Text(connection.displayName).tag(connection.id)
+                        }
+                    }
+                }
+            }
             if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
             if model.content != nil {
                 Section {

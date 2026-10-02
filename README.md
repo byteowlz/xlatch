@@ -18,6 +18,8 @@ xlatch pair
 
 Pairing guides capability selection and prints a terminal QR. An empty registry offers an explicit approval for the built-in content round-trip action. Use `--json` for scripted output or `--qr pair.svg` to export the QR. Application configuration uses JSON or TOML.
 
+The iOS app can keep several paired servers. Add or switch servers under **Settings → Servers**; when more than one is paired, the share extension also shows a compact server picker. The selected server is the default for new shares, Shortcuts discover targets across every paired server, and queued Outbox items retain the credentials of their original server.
+
 ## Service lifecycle
 
 ```sh

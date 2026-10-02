@@ -9,6 +9,7 @@ import OSLog
     @Published var pendingEnrollments: [PendingEnrollment] = []
     @Published var ownPendingEnrollment: PendingEnrollment?
     @Published var connection: Connection?
+    @Published var connections: [Connection] = []
     @Published var capabilities: [Capability] = []
     @Published var jobs: [Job] = []
     @Published var parkedItems: [ParkedItem] = []
@@ -52,7 +53,7 @@ import OSLog
         })
     }
     init() {
-        do { connection = try CredentialStore.load(); capabilities = APIClient.cachedCapabilities(); if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }; loadActionPresentation() }
+        do { connections = try CredentialStore.loadAll(); connection = try CredentialStore.load(); capabilities = APIClient.cachedCapabilities(for: connection); if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }; loadActionPresentation() }
         catch { self.error = error.localizedDescription }
     }
     func client() throws -> APIClient {
@@ -60,15 +61,19 @@ import OSLog
         return try APIClient(connection: connection)
     }
     func refresh() async {
-        guard connection != nil, !refreshing else { return }
+        guard let expectedConnection = connection, !refreshing else { return }
+        let expectedID = expectedConnection.id
         refreshing = true; defer { refreshing = false }
         do {
-            let client = try client()
+            let client = try APIClient(connection: expectedConnection)
             guard try await refreshEnrollment(using: client) else { return }
-            capabilities = try await client.capabilities()
-            loadActionPresentation()
-            parkedItems = try await client.rpc(["op": "parked"])
+            let refreshedCapabilities = try await client.capabilities()
+            let refreshedParked: [ParkedItem] = try await client.rpc(["op": "parked"])
             let recent: [Job] = try await client.rpc(["op": "jobs"])
+            guard connection?.id == expectedID else { return }
+            capabilities = refreshedCapabilities
+            loadActionPresentation()
+            parkedItems = refreshedParked
             let previous = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0.status) })
             for job in recent where job.isFinished && ["queued", "running"].contains(previous[job.id] ?? "") {
                 let content = UNMutableNotificationContent()
@@ -77,20 +82,36 @@ import OSLog
                 content.sound = .default
                 try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: job.id, content: content, trigger: nil))
             }
-            connection = try CredentialStore.load()
+            connections = try CredentialStore.loadAll(); connection = try CredentialStore.load()
             jobs = recent; activeServerURL = client.lastSuccessfulURL; error = nil; lastUpdated = Date()
         } catch { self.error = error.localizedDescription }
     }
     func pair(_ ticket: PairingTicket) async throws {
         connection = try await APIClient.pair(ticket, name: UIDevice.current.name)
+        connections = try CredentialStore.loadAll()
         enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil
         capabilities = []; jobs = []; parkedItems = []; activeServerURL = nil
         if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }
         loadActionPresentation()
         await refresh()
     }
+    func selectServer(_ id: String) async {
+        guard connection?.id != id else { return }
+        do {
+            try CredentialStore.select(id)
+            connections = try CredentialStore.loadAll(); connection = try CredentialStore.load()
+            enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil
+            capabilities = APIClient.cachedCapabilities(for: connection); jobs = []; parkedItems = []; activeServerURL = nil; lastUpdated = nil; error = nil
+            if let connection { disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID) }
+            loadActionPresentation(); await refresh()
+        } catch { self.error = error.localizedDescription }
+    }
     func disconnect() {
-        do { try CredentialStore.clear(); connection = nil; enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = []; jobs = []; parkedItems = []; activeServerURL = nil; lastUpdated = nil; error = nil; loadActionPresentation() }
+        do {
+            try CredentialStore.clear(); connections = try CredentialStore.loadAll(); connection = try CredentialStore.load()
+            enrollmentStatus = nil; pendingEnrollments = []; ownPendingEnrollment = nil; capabilities = APIClient.cachedCapabilities(for: connection); jobs = []; parkedItems = []; activeServerURL = nil; lastUpdated = nil; error = nil; loadActionPresentation()
+            if connection != nil { Task { await refresh() } }
+        }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -600,6 +621,19 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("Active server", selection: Binding(
+                        get: { model.connection?.id ?? "" },
+                        set: { id in Task { await model.selectServer(id) } }
+                    )) {
+                        ForEach(model.connections, id: \.id) { server in
+                            Text(server.displayName).tag(server.id)
+                        }
+                    }
+                    NavigationLink { PairView() } label: { Label("Add server", systemImage: "plus.circle") }
+                } header: { Text("Servers") } footer: {
+                    Text("The active server supplies this screen and is the default in the share sheet. Existing Outbox items remain bound to the server that accepted their pairing key.")
+                }
                 Section {
                     LabeledContent("Address selection", value: "Automatic")
                     LabeledContent("Server verification", value: model.connection?.keyPin == nil ? "Paired certificate" : "Paired server key")

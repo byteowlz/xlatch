@@ -61,36 +61,66 @@ final class PinnedSession: NSObject, URLSessionDelegate, URLSessionTaskDelegate,
 }
 
 enum CredentialStore {
+    private struct StoredConnections: Codable {
+        var connections: [Connection]
+        var activeID: String?
+    }
     static var query: [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.byteowlz.xlatch.connection", kSecAttrAccount as String: "paired-device"]
         if let group = Bundle.main.object(forInfoDictionaryKey: "XLatchKeychainGroup") as? String { query[kSecAttrAccessGroup as String] = group }
         return query
     }
-    static func load() throws -> Connection? {
+    private static func stored() throws -> StoredConnections {
         var query = query; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
+        if status == errSecItemNotFound { return StoredConnections(connections: [], activeID: nil) }
         guard status == errSecSuccess, let data = result as? Data else { throw ClientError.delivery("Unlock your phone to access its pairing key. (\(status))", retryable: status == errSecInteractionNotAllowed) }
-        return try JSONDecoder().decode(Connection.self, from: data)
+        if let collection = try? JSONDecoder().decode(StoredConnections.self, from: data) { return collection }
+        let legacy = try JSONDecoder().decode(Connection.self, from: data)
+        return StoredConnections(connections: [legacy], activeID: legacy.id)
     }
-    static func save(_ connection: Connection) throws {
+    static func load() throws -> Connection? {
+        let value = try stored()
+        return value.connections.first(where: { $0.id == value.activeID }) ?? value.connections.first
+    }
+    static func loadAll() throws -> [Connection] { try stored().connections }
+    static func save(_ connection: Connection, makeActive: Bool = true) throws {
         var updated = connection
-        if let saved = try load(), saved.deviceID == connection.deviceID, saved.pin == connection.pin {
+        var value = try stored()
+        if let saved = value.connections.first(where: { $0.id == connection.id }) {
             updated.keyPin = updated.keyPin ?? saved.keyPin
         }
-        let data = try JSONEncoder().encode(updated)
+        value.connections.removeAll { $0.id == updated.id }
+        value.connections.append(updated)
+        if makeActive || value.activeID == nil { value.activeID = updated.id }
+        try write(value)
+    }
+    static func select(_ id: String) throws {
+        var value = try stored()
+        guard value.connections.contains(where: { $0.id == id }) else { throw ClientError.message("Server is no longer paired.") }
+        value.activeID = id
+        try write(value)
+    }
+    static func clear() throws {
+        var value = try stored()
+        guard let active = value.activeID ?? value.connections.first?.id else { return }
+        value.connections.removeAll { $0.id == active }
+        value.activeID = value.connections.first?.id
+        if value.connections.isEmpty {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw ClientError.message("Could not remove the pairing key.") }
+        } else { try write(value) }
+        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.removeObject(forKey: "capabilities.\(active)")
+    }
+    private static func write(_ value: StoredConnections) throws {
+        let data = try JSONEncoder().encode(value)
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             var insert = query; insert[kSecValueData as String] = data
             insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else { throw ClientError.message("Could not save the device key securely.") }
         } else if status != errSecSuccess { throw ClientError.message("Could not update the device key. (\(status))") }
-    }
-    static func clear() throws {
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw ClientError.message("Could not remove the pairing key.") }
-        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.removeObject(forKey: "capabilities")
     }
 }
 
@@ -197,12 +227,12 @@ final class APIClient {
     func capabilities() async throws -> [Capability] {
         let capabilities: [Capability] = try await rpc(["op": "discover"])
         let cache = CapabilityCache(version: Self.capabilityCacheVersion, deviceID: connection.deviceID, pin: connection.pin, capabilities: capabilities)
-        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(try JSONEncoder().encode(cache), forKey: "capabilities")
+        UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.set(try JSONEncoder().encode(cache), forKey: "capabilities.\(connection.id)")
         return capabilities
     }
-    static func cachedCapabilities() -> [Capability] {
-        guard let connection = try? CredentialStore.load(),
-              let data = UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.data(forKey: "capabilities"),
+    static func cachedCapabilities(for connection: Connection? = try? CredentialStore.load()) -> [Capability] {
+        guard let connection,
+              let data = UserDefaults(suiteName: "group.com.byteowlz.xlatch")?.data(forKey: "capabilities.\(connection.id)"),
               let cache = try? JSONDecoder().decode(CapabilityCache.self, from: data),
               cache.version == capabilityCacheVersion,
               cache.deviceID == connection.deviceID, cache.pin == connection.pin else { return [] }
@@ -214,10 +244,10 @@ final class APIClient {
         selected.urls = Array(Set([route.url] + (route.addresses.isEmpty ? (connection.urls ?? []) : route.addresses))).sorted()
         selected.keyPin = route.keyPin
         connection = selected
-        if let saved = try CredentialStore.load(), saved.deviceID == connection.deviceID, saved.pin == connection.pin {
+        if let saved = try CredentialStore.loadAll().first(where: { $0.id == connection.id }) {
             var remembered = saved
             remembered.urls = selected.urls; remembered.keyPin = selected.keyPin
-            try CredentialStore.save(remembered)
+            try CredentialStore.save(remembered, makeActive: false)
         }
         // Persist trusted metadata before submitting work: a Keychain error must not hide an accepted job.
         // Route discovery retries health probes only. Outbox retries an invocation with its durable idempotency key.

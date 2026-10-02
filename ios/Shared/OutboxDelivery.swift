@@ -3,17 +3,17 @@ import Foundation
 actor OutboxDelivery {
     static let shared = OutboxDelivery()
     private let makeStore: () throws -> OutboxStore
-    private let connection: () throws -> Connection?
+    private let connections: () throws -> [Connection]
     private let deliver: (OutboxItem, Connection) async throws -> Job
     private let schedule: () -> Void
     private var draining = false
     private(set) var lastError: String?
 
     init(store: @escaping () throws -> OutboxStore = { try OutboxStore() },
-         connection: @escaping () throws -> Connection? = CredentialStore.load,
+         connections: @escaping () throws -> [Connection] = CredentialStore.loadAll,
          deliver: ((OutboxItem, Connection) async throws -> Job)? = nil,
          schedule: @escaping () -> Void = OutboxBackground.schedule) {
-        makeStore = store; self.connection = connection
+        makeStore = store; self.connections = connections
         self.deliver = deliver ?? { item, connection in try await OutboxDelivery.invoke(item, connection: connection, store: store()) }
         self.schedule = schedule
     }
@@ -35,7 +35,7 @@ actor OutboxDelivery {
             for _ in 0..<10 {
                 guard !Task.isCancelled, let item = try store.claim(id: id) else { break }
                 do {
-                    guard let current = try connection(), try item.matches(current) else { throw ClientError.message("Pairing changed or was removed. This share will not be sent to another server or device.") }
+                    guard let current = try connections().first(where: { try item.matches($0) }) else { throw ClientError.message("Pairing changed or was removed. This share will not be sent to another server or device.") }
                     guard !(item.chain ?? [item.capability]).contains(where: { ShareActionPreferences.disabled(deviceID: current.deviceID).contains($0.id) }) else { throw ClientError.message("This action is disabled on this phone. Enable it before retrying.") }
                     try Task.checkCancellation()
                     guard try store.owns(item) else { continue }

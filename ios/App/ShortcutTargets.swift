@@ -16,7 +16,7 @@ struct XLatchTarget: AppEntity {
         server = URL(string: connection.url)?.host ?? connection.url
     }
     static func identifier(connection: Connection, capability: Capability) -> String {
-        "\(connection.deviceID):\(capability.revision):\(capability.id)"
+        "\(connection.id)|\(connection.deviceID):\(capability.revision):\(capability.id)"
     }
 }
 
@@ -35,21 +35,20 @@ struct XLatchTargetQuery: EntityStringQuery {
         get { UserDefaults.standard.string(forKey: "quick-send-target") }
         set { UserDefaults.standard.set(newValue, forKey: "quick-send-target") }
     }
-    static func connection() throws -> Connection {
-        guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair a server first.") }
-        return connection
-    }
     static func available(_ capabilities: [Capability], connection: Connection) -> [Capability] {
         let disabled = ShareActionPreferences.disabled(deviceID: connection.deviceID)
         return ShareActionPreferences.ordered(capabilities.filter { $0.status == "active" && !disabled.contains($0.id) }, deviceID: connection.deviceID)
     }
     static func targets() async throws -> [XLatchTarget] {
-        let connection = try connection()
-        let cached = APIClient.cachedCapabilities()
-        let actions: [Capability]
-        if cached.isEmpty { actions = try await APIClient(connection: connection).capabilities() }
-        else { actions = cached }
-        return available(actions, connection: connection).map { XLatchTarget(connection: connection, capability: $0) }
+        let connections = try CredentialStore.loadAll()
+        guard !connections.isEmpty else { throw ClientError.message("Open xlatch and pair a server first.") }
+        var targets: [XLatchTarget] = []
+        for connection in connections {
+            let cached = APIClient.cachedCapabilities(for: connection)
+            let actions = cached.isEmpty ? try await APIClient(connection: connection).capabilities() : cached
+            targets.append(contentsOf: available(actions, connection: connection).map { XLatchTarget(connection: connection, capability: $0) })
+        }
+        return targets
     }
     static func resolve(_ id: String, connection: Connection, capabilities: [Capability], mime: String) throws -> Capability {
         guard let capability = available(capabilities, connection: connection).first(where: {
@@ -60,9 +59,12 @@ struct XLatchTargetQuery: EntityStringQuery {
     }
     static func send(_ input: ShareInput, target: XLatchTarget?) async throws -> OutboxItem {
         guard let id = target?.id ?? selectedID else { throw ClientError.message("Choose a quick-send target in xlatch → Server → Shortcuts & Back Tap.") }
-        let connection = try connection()
+        let connections = try CredentialStore.loadAll()
+        guard let connection = connections.first(where: { id.hasPrefix("\($0.id)|") }) else {
+            throw ClientError.message("The selected server is no longer paired. Choose the target again.")
+        }
         let client = try APIClient(connection: connection)
-        let cached = APIClient.cachedCapabilities()
+        let cached = APIClient.cachedCapabilities(for: connection)
         let actions: [Capability]
         if cached.isEmpty { actions = try await client.capabilities() }
         else { actions = cached }
