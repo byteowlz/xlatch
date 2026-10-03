@@ -138,6 +138,26 @@ final class ShareViewController: UIViewController {
             let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
             uploadingID = key
             receipt = try await OutboxDelivery.shared.submit(input, capability: steps[0], connection: connection, id: key, chain: chain.isEmpty ? nil : steps)
+            if let jobID = receipt?.jobID {
+                let client = try APIClient(connection: connection)
+                let terminal: Job?
+                do {
+                    terminal = try await ImmediateJobObservation.wait(for: jobID) { id in
+                        try await client.rpc(["op": "job", "id": id])
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // The invocation is durably accepted. A transient status-read failure
+                    // must not turn it into a duplicate invocation.
+                    terminal = nil
+                }
+                if let terminal, terminal.status != "succeeded" {
+                    requestKeys.removeValue(forKey: keyID)
+                    receipt = nil
+                    throw ClientError.message(ImmediateJobObservation.failureMessage(for: terminal))
+                }
+            }
             sent = true
         } catch { self.error = error.localizedDescription }
     }

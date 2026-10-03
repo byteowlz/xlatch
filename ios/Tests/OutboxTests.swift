@@ -244,6 +244,31 @@ private actor DeduplicatingServer {
 }
 
 extension OutboxTests {
+    func testImmediateJobObservationSurfacesFastFailure() async throws {
+        var responses = [
+            Job(id: "job", capability_id: "pi.session", status: "queued", result: nil, error: nil, created_at: 0),
+            Job(id: "job", capability_id: "pi.session", status: "failed", result: nil, error: "executable hash mismatch", created_at: 0)
+        ]
+        let terminal = try await ImmediateJobObservation.wait(for: "job", attempts: 3, intervalNanoseconds: 0) { _ in
+            responses.removeFirst()
+        }
+        XCTAssertEqual(terminal?.status, "failed")
+        XCTAssertEqual(
+            terminal.map(ImmediateJobObservation.failureMessage),
+            "This action changed after it was approved. Reload or restart the tool that registered it, then approve the pending revision in xlatch."
+        )
+    }
+
+    func testImmediateJobObservationLeavesLongJobAsynchronous() async throws {
+        var fetches = 0
+        let terminal = try await ImmediateJobObservation.wait(for: "job", attempts: 3, intervalNanoseconds: 0) { _ in
+            fetches += 1
+            return Job(id: "job", capability_id: "slow", status: "running", result: nil, error: nil, created_at: 0)
+        }
+        XCTAssertNil(terminal)
+        XCTAssertEqual(fetches, 3)
+    }
+
     func testUploadProgressIsNotAcceptanceAndOldLeaseCannotOverwriteRetry() throws {
         let (_, store, _, item) = try fixture()
         _ = try store.enqueue(item)

@@ -99,3 +99,31 @@ actor OutboxDelivery {
         return ShareInput(mime: input.mime, label: input.label, payload: payload)
     }
 }
+
+enum ImmediateJobObservation {
+    static func wait(
+        for jobID: String,
+        attempts: Int = 8,
+        intervalNanoseconds: UInt64 = 200_000_000,
+        fetch: (String) async throws -> Job
+    ) async throws -> Job? {
+        guard attempts > 0 else { return nil }
+        for attempt in 0..<attempts {
+            let job = try await fetch(jobID)
+            if job.isFinished { return job }
+            if attempt + 1 < attempts && intervalNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: intervalNanoseconds)
+            }
+        }
+        return nil
+    }
+
+    static func failureMessage(for job: Job) -> String {
+        let detail = job.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if detail?.localizedCaseInsensitiveContains("executable hash mismatch") == true {
+            return "This action changed after it was approved. Reload or restart the tool that registered it, then approve the pending revision in xlatch."
+        }
+        if let detail, !detail.isEmpty { return "Action failed: \(detail)" }
+        return job.status == "cancelled" ? "The action was cancelled." : "The action failed without an error message."
+    }
+}
