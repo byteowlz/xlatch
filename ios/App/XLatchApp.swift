@@ -60,6 +60,16 @@ import OSLog
         guard let connection else { throw ClientError.message("Pair your server first.") }
         return try APIClient(connection: connection)
     }
+    func resendCandidates(for jobID: String) async throws -> [Capability] {
+        try await client().rpc(["op": "job_candidates", "id": jobID])
+    }
+    func resend(_ jobID: String, to capability: Capability, idempotencyKey: String) async throws -> Job {
+        try await client().rpc([
+            "op": "resend_job", "id": jobID,
+            "capability_id": capability.id, "revision": capability.revision,
+            "idempotency_key": idempotencyKey
+        ])
+    }
     func refresh() async {
         guard let expectedConnection = connection, !refreshing else { return }
         let expectedID = expectedConnection.id
@@ -442,8 +452,12 @@ struct ActivityView: View {
     @EnvironmentObject var model: AppModel
     @State private var saved: [OutboxItem] = []
     @State private var error: String?
+    @State private var resendSelection: ResendSelection?
+    @State private var openedJob: OpenedJob?
+    @State private var retryingJobID: String?
+    @State private var retryKeys: [String: String] = [:]
     private var rows: [ActivityEntry] {
-        ActivityEntry.merge(jobs: model.jobs, outbox: saved, connection: model.connection)
+        ActivityEntry.merge(jobs: model.jobs, outbox: saved, connection: model.connection, capabilities: model.capabilities)
     }
     var body: some View {
         NavigationStack {
@@ -472,6 +486,11 @@ struct ActivityView: View {
                 }
                 Section { NavigationLink("Manage queued shares") { OutboxView() } }
             }.navigationTitle("Activity")
+                .navigationDestination(item: $openedJob) { selection in JobView(id: selection.id) }
+                .sheet(item: $resendSelection) { selection in
+                    NavigationStack { ResendJobView(id: selection.id) }
+                        .environmentObject(model)
+                }
                 .refreshable { await model.refresh(); reload() }
                 .task {
                     while !Task.isCancelled {
@@ -492,6 +511,16 @@ struct ActivityView: View {
         if row.canRetry, let id = row.outboxID {
             Button { retry(id) } label: { Label("Retry now", systemImage: "arrow.clockwise") }.tint(.blue)
         }
+        if row.jobStatus == "failed", row.jobID != nil {
+            Button { Task { await retry(job: row) } } label: {
+                Label(retryingJobID == row.jobID ? "Retrying…" : "Retry action", systemImage: "arrow.clockwise")
+            }.tint(.blue).disabled(retryingJobID != nil)
+        }
+        if let id = row.jobID, row.jobStatus.map({ ["succeeded", "failed", "cancelled"].contains($0) }) == true {
+            Button { resendSelection = ResendSelection(id: id) } label: {
+                Label("Send again…", systemImage: "arrowshape.turn.up.right")
+            }.tint(.teal)
+        }
     }
     private func edit(_ change: (OutboxStore) throws -> Void) {
         do { try change(OutboxStore()); reload(); error = nil }
@@ -501,11 +530,33 @@ struct ActivityView: View {
         edit { try $0.retry(id) }
         Task { await OutboxDelivery.shared.drain(id: id); reload() }
     }
+    private func retry(job row: ActivityEntry) async {
+        guard let id = row.jobID, let capabilityID = row.capabilityID else { return }
+        retryingJobID = id; defer { retryingJobID = nil }
+        do {
+            let candidates = try await model.resendCandidates(for: id)
+            guard let capability = candidates.first(where: { $0.id == capabilityID }) else {
+                throw ClientError.message("This action is no longer available or granted. Choose Send again to select another action.")
+            }
+            let key = retryKeys[id] ?? UUID().uuidString
+            retryKeys[id] = key
+            let resent = try await model.resend(id, to: capability, idempotencyKey: key)
+            retryKeys.removeValue(forKey: id)
+            await model.refresh()
+            openedJob = OpenedJob(id: resent.id)
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
 }
+
+private struct ResendSelection: Identifiable { let id: String }
+private struct OpenedJob: Identifiable, Hashable { let id: String }
 
 struct ActivityEntry: Identifiable {
     let id: String
     let jobID: String?
+    let capabilityID: String?
+    let jobStatus: String?
     let title: String
     let status: String
     let server: String
@@ -517,7 +568,7 @@ struct ActivityEntry: Identifiable {
     var canRetry: Bool { outboxState.map { [.waiting, .paused].contains($0) } ?? false }
     var canStop: Bool { outboxState.map { [.waiting, .sending, .paused].contains($0) } ?? false }
 
-    static func merge(jobs: [Job], outbox: [OutboxItem], connection: Connection?) -> [ActivityEntry] {
+    static func merge(jobs: [Job], outbox: [OutboxItem], connection: Connection?, capabilities: [Capability]) -> [ActivityEntry] {
         let local = outbox.filter { item in
             guard let connection else { return false }
             return (try? item.matches(connection)) == true
@@ -526,13 +577,14 @@ struct ActivityEntry: Identifiable {
         let known = Set(jobs.map(\.id))
         let remote = jobs.map { job in
             let receipt = receipts[job.id]
-            return ActivityEntry(id: job.id, jobID: job.id, title: receipt?.targetTitle ?? job.capability_id,
+            let title = receipt?.targetTitle ?? capabilities.first(where: { $0.id == job.capability_id })?.manifest.title ?? job.capability_id
+            return ActivityEntry(id: job.id, jobID: job.id, capabilityID: job.capability_id, jobStatus: job.status, title: title,
                 status: job.status == "succeeded" ? "Completed" : job.statusLabel, server: receipt?.serverURL ?? connection?.url ?? "",
                 preview: receipt?.label, created: Date(timeIntervalSince1970: TimeInterval(job.created_at)), needsAttention: job.status == "failed",
                 outboxID: nil, outboxState: nil)
         }
         let pending = local.filter { !known.contains($0.jobID ?? "") }.map { item in
-            ActivityEntry(id: "outbox:" + item.id, jobID: item.jobID, title: item.targetTitle,
+            ActivityEntry(id: "outbox:" + item.id, jobID: item.jobID, capabilityID: nil, jobStatus: nil, title: item.targetTitle,
                 status: item.statusLabel, server: item.serverURL, preview: item.label, created: item.created,
                 needsAttention: [.paused, .expired].contains(item.state), outboxID: item.id, outboxState: item.state)
         }
@@ -546,6 +598,9 @@ struct JobView: View {
     @State private var job: Job?
     @State private var error: String?
     @State private var resultFile: URL?
+    @State private var retrying = false
+    @State private var resentJob: Job?
+    @State private var retryKey = UUID().uuidString
     var body: some View {
         List {
             if let job {
@@ -578,6 +633,23 @@ struct JobView: View {
                 if let error = job.error { Section("Could not complete") { Text(error).foregroundStyle(.red).textSelection(.enabled) } }
                 if !job.isFinished {
                     Section { HStack { ProgressView(); Text("Your server is working on this.") }; Button("Cancel job", role: .destructive) { Task { await cancel() } } }
+                } else {
+                    Section("Run again") {
+                        if job.status == "failed" {
+                            Button { Task { await retry(job) } } label: {
+                                if retrying { HStack { ProgressView(); Text("Retrying…") } }
+                                else { Label("Retry action", systemImage: "arrow.clockwise") }
+                            }.disabled(retrying)
+                        }
+                        NavigationLink { ResendJobView(id: job.id) } label: {
+                            Label("Send to another action…", systemImage: "arrowshape.turn.up.right")
+                        }
+                        if let resentJob {
+                            NavigationLink { JobView(id: resentJob.id) } label: {
+                                Label("View retried job", systemImage: "arrow.up.right.circle.fill")
+                            }
+                        }
+                    }
                 }
             } else { ProgressView("Loading job…") }
             if let error { Text(error).foregroundStyle(.red) }
@@ -605,6 +677,92 @@ struct JobView: View {
     private func cancel() async {
         do { job = try await model.client().rpc(["op": "cancel", "id": id]) }
         catch { self.error = error.localizedDescription }
+    }
+    private func retry(_ source: Job) async {
+        retrying = true; defer { retrying = false }
+        do {
+            let candidates = try await model.resendCandidates(for: source.id)
+            guard let capability = candidates.first(where: { $0.id == source.capability_id }) else {
+                throw ClientError.message("This action is no longer available or granted. Choose another action below.")
+            }
+            resentJob = try await model.resend(source.id, to: capability, idempotencyKey: retryKey)
+            retryKey = UUID().uuidString
+            await model.refresh()
+            error = nil
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+private struct ResendJobView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let id: String
+    @State private var candidates: [Capability] = []
+    @State private var loading = true
+    @State private var sending: String?
+    @State private var submitted: Job?
+    @State private var error: String?
+    @State private var sendKeys: [String: String] = [:]
+
+    var body: some View {
+        List {
+            if let submitted {
+                Section {
+                    Label("Sent again", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    NavigationLink { JobView(id: submitted.id) } label: {
+                        Label("View new job", systemImage: "arrow.up.right.circle")
+                    }
+                }
+            } else if loading {
+                ProgressView("Finding compatible actions…")
+            } else if candidates.isEmpty {
+                ContentUnavailableView("No compatible actions", systemImage: "bolt.slash",
+                    description: Text("The original content may no longer match a granted action."))
+            } else {
+                Section("Send to") {
+                    ForEach(orderedCandidates) { capability in
+                        Button { Task { await send(to: capability) } } label: {
+                            HStack(spacing: 12) {
+                                CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(capability.manifest.title).font(.headline).foregroundStyle(.primary)
+                                    Text(capability.contentLabel).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if sending == capability.id { ProgressView() }
+                                else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
+                            }.contentShape(Rectangle())
+                        }.disabled(sending != nil)
+                    }
+                }
+            }
+            if let error { Section { Text(error).foregroundStyle(.red).textSelection(.enabled) } }
+        }
+        .navigationTitle("Send again")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        .task { await load() }
+    }
+
+    private var orderedCandidates: [Capability] {
+        guard let connection = model.connection else { return candidates }
+        return ShareActionPreferences.ordered(candidates, deviceID: connection.deviceID)
+    }
+    private func load() async {
+        loading = true; defer { loading = false }
+        do { candidates = try await model.resendCandidates(for: id); error = nil }
+        catch { self.error = error.localizedDescription }
+    }
+    private func send(to capability: Capability) async {
+        sending = capability.id; defer { sending = nil }
+        do {
+            let key = sendKeys[capability.id] ?? UUID().uuidString
+            sendKeys[capability.id] = key
+            submitted = try await model.resend(id, to: capability, idempotencyKey: key)
+            sendKeys.removeValue(forKey: capability.id)
+            await model.refresh()
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 }
 

@@ -253,23 +253,7 @@ impl Store {
     /// Returns an error when the item is unavailable or storage cannot be read.
     pub fn parked_candidates(&self, owner: &str, id: &str) -> Result<Vec<Capability>> {
         let parked = self.parked_item(owner, id)?;
-        let candidates = self
-            .discover(owner)?
-            .into_iter()
-            .filter(|capability| {
-                capability
-                    .manifest
-                    .accepts
-                    .iter()
-                    .any(|accepted| mime_matches(accepted, &parked.item.mime_type))
-            })
-            .filter_map(|capability| {
-                self.validate_file_input(owner, &capability.manifest, &parked.input)
-                    .ok()
-                    .map(|_| capability)
-            })
-            .collect();
-        Ok(candidates)
+        self.input_candidates(owner, &parked.item.mime_type, &parked.input)
     }
 
     /// Atomically create or recover the one job for a parked item, then remove it.
@@ -470,7 +454,7 @@ fn preparation_from_row(
     }))
 }
 
-fn mime_matches(accepted: &str, actual: &str) -> bool {
+pub(crate) fn mime_matches(accepted: &str, actual: &str) -> bool {
     accepted == "*/*"
         || accepted == actual
         || accepted

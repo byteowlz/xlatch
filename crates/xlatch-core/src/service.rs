@@ -77,6 +77,21 @@ pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Valu
             }
             Ok(value)
         }
+        Request::JobCandidates { id } => {
+            Ok(serde_json::to_value(store.job_candidates(owner, &id)?)?)
+        }
+        Request::ResendJob {
+            id,
+            capability_id,
+            revision,
+            idempotency_key,
+        } => job_response(store.resend_job(
+            owner,
+            &id,
+            &capability_id,
+            &revision,
+            &idempotency_key,
+        )?),
         Request::Cancel { id } => job_response(store.cancel(owner, &id)?),
         Request::Events { after } => Ok(serde_json::to_value(store.events(owner, after)?)?),
     }

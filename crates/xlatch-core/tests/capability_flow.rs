@@ -2091,6 +2091,74 @@ fn parked_content_is_owner_scoped_and_dispatches_once() -> Result<()> {
 }
 
 #[test]
+fn completed_jobs_can_be_retried_or_sent_to_another_current_target() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    let mut original = manifest();
+    original.input_schema = json!({
+        "type":"object",
+        "required":["text","mime_type"],
+        "properties":{"text":{"type":"string"},"mime_type":{"const":"text/plain"}},
+        "additionalProperties":false
+    });
+    let original = store.register(&original)?;
+    store.approve("echo", &original.revision, false)?;
+    let (phone, _) = pair(&mut store, 126)?;
+    let (other_phone, _) = pair(&mut store, 127)?;
+
+    let mut alternate = original.manifest.clone();
+    alternate.id = "echo.alternate".into();
+    alternate.title = "Alternate".into();
+    let alternate = store.register(&alternate)?;
+    store.approve("echo.alternate", &alternate.revision, false)?;
+    store.grant(&phone, "echo.alternate", &alternate.revision)?;
+
+    let mut incompatible = original.manifest.clone();
+    incompatible.id = "image.only".into();
+    incompatible.accepts = vec!["image/*".into()];
+    let incompatible = store.register(&incompatible)?;
+    store.approve("image.only", &incompatible.revision, false)?;
+    store.grant(&phone, "image.only", &incompatible.revision)?;
+
+    let input = json!({"text":"send me again","mime_type":"text/plain"});
+    let source = store.invoke(&phone, "echo", &original.revision, &input, "first")?;
+    assert!(store.job_candidates(&phone, &source.id).is_err());
+    store.cancel(&phone, &source.id)?;
+    assert!(store.job_candidates(&other_phone, &source.id).is_err());
+
+    let candidates = store.job_candidates(&phone, &source.id)?;
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.manifest.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["echo", "echo.alternate"]
+    );
+
+    let resent = store.resend_job(
+        &phone,
+        &source.id,
+        "echo.alternate",
+        &alternate.revision,
+        "resend-1",
+    )?;
+    assert_ne!(resent.id, source.id);
+    assert_eq!(resent.input, input);
+    assert_eq!(resent.capability_id, "echo.alternate");
+    assert_eq!(
+        store.resend_job(
+            &phone,
+            &source.id,
+            "echo.alternate",
+            &alternate.revision,
+            "resend-1",
+        )?,
+        resent
+    );
+    Ok(())
+}
+
+#[test]
 fn parked_preparation_caches_typed_result_without_risking_original() -> Result<()> {
     use xlatch_core::{
         chain::Reference,

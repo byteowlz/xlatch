@@ -358,6 +358,22 @@ pub enum Request {
         /// Job id.
         id: String,
     },
+    /// List current granted targets compatible with a completed owned job.
+    JobCandidates {
+        /// Source job id. Its input remains server-side.
+        id: String,
+    },
+    /// Create a fresh execution from a completed owned job's retained input.
+    ResendJob {
+        /// Source job id.
+        id: String,
+        /// Current target capability id.
+        capability_id: String,
+        /// Current target revision.
+        revision: String,
+        /// Fresh retry identity for this explicit execution.
+        idempotency_key: String,
+    },
     /// Cancel a queued or running owned job.
     Cancel {
         /// Job id.
