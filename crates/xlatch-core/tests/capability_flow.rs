@@ -1565,12 +1565,13 @@ fn fan_out_sends_original_input_to_every_target_and_can_be_saved() -> Result<()>
 
     let completed = store.job(&owner, &parent.id)?;
     assert_eq!(completed.status, "succeeded");
+    let result = completed.result.as_ref().context("fan-out result")?;
     assert_eq!(
-        completed.result.as_ref().unwrap()["results"][0]["result"],
+        result["results"][0]["result"],
         json!({"text":"first"})
     );
     assert_eq!(
-        completed.result.as_ref().unwrap()["results"][1]["result"],
+        result["results"][1]["result"],
         json!({"text":"second"})
     );
     assert_eq!(store.composition_steps(&owner, &parent.id)?.len(), 2);

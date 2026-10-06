@@ -134,6 +134,8 @@ pub fn validate(manifest: &Manifest, steps: &[Step]) -> Result<()> {
     Ok(())
 }
 /// Validate independent destinations that all receive the original input.
+/// # Errors
+/// Rejects nested, inconsistent, incompatible, or under-budgeted fan-out manifests.
 pub fn validate_fan_out(manifest: &Manifest, targets: &[Target]) -> Result<()> {
     ensure!(
         (2..=16).contains(&targets.len()),

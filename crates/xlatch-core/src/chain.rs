@@ -293,6 +293,8 @@ impl Store {
     }
 
     /// Submit a reusable fan-out target for the normal approval flow.
+    /// # Errors
+    /// Rejects invalid names, stale or unauthorized targets, and storage failures.
     pub fn save_group(&self, owner: &str, refs: &[Reference], title: &str) -> Result<Capability> {
         ensure!(
             !title.trim().is_empty() && title.len() <= 120,
@@ -308,6 +310,8 @@ impl Store {
     }
 
     /// Atomically enqueue a one-off fan-out without registering a capability.
+    /// # Errors
+    /// Rejects invalid input, stale or unauthorized targets, reused keys, and storage failures.
     pub fn invoke_group(
         &self,
         owner: &str,
