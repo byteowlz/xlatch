@@ -17,7 +17,9 @@ Start a server with a stable LAN address reachable by the phone (substitute your
 ./target/debug/xlatch service run --listen 0.0.0.0:7443 --public-url https://YOUR-LAN-IP:7443
 ```
 
-Data uses the existing XDG resolver (`~/.local/share/xlatch` by default on macOS/Linux). Both binaries accept `--data-dir PATH` for an isolated instance. TLS certificate/key and SQLite live there; don't commit or share that directory. Keep the daemon running in a terminal while testing. `serve` runs in the foreground and can be supervised by launchd/systemd; it does not install a background service automatically.
+Data uses the existing XDG resolver (`~/.local/share/xlatch` by default on macOS/Linux). Both binaries accept `--data-dir PATH` for an isolated instance. TLS certificate/key and SQLite live there; don't commit or share that directory. Keep the daemon running in a terminal while testing. `service run` runs in the foreground; it does not install a background service automatically.
+
+For a background user service, run `xlatch service enable --port 7898` from the installed binary, then `xlatch service status`. Re-running `enable` with different settings unloads the old instance and replaces its definition. `service disable` stops it and removes the installed definition (not application data). On macOS, the CLI prefers an existing instance's domain, otherwise the GUI domain when available or the background user domain; the LaunchAgent supports both Aqua and Background sessions. Regression tests use a fake launchctl, so `cargo test -p xlatch` does not modify host services.
 
 In a second terminal:
 

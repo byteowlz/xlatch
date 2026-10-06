@@ -34,7 +34,7 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Stop the service and disable automatic startup.
+    /// Stop the service, disable automatic startup, and remove the definition.
     Disable,
 }
 
@@ -109,13 +109,14 @@ fn enable(dir: &Path, options: &server::Options, dry_run: bool) -> Result<()> {
         );
         return Ok(());
     }
-    if path.exists() {
-        ensure!(
-            std::fs::read_to_string(&path)? == definition,
-            "service definition already exists with different settings: {}; disable and remove it before reconfiguring",
-            path.display()
-        );
-    } else {
+    let installed = path
+        .exists()
+        .then(|| std::fs::read_to_string(&path))
+        .transpose()?;
+    if installed.as_deref() != Some(definition.as_str()) {
+        if installed.is_some() {
+            stop_loaded()?;
+        }
         std::fs::create_dir_all(path.parent().context("missing service directory")?)?;
         std::fs::write(&path, definition)?;
     }
@@ -131,11 +132,7 @@ fn enable(dir: &Path, options: &server::Options, dry_run: bool) -> Result<()> {
             "launchctl",
             &["enable", &format!("{domain}/com.byteowlz.xlatch")],
         )?;
-        let loaded = Process::new("launchctl")
-            .args(["print", &format!("{domain}/com.byteowlz.xlatch")])
-            .output()?
-            .status
-            .success();
+        let loaded = launchctl_present(&format!("{domain}/com.byteowlz.xlatch"))?;
         if !loaded {
             checked(
                 "launchctl",
@@ -155,18 +152,30 @@ fn enable(dir: &Path, options: &server::Options, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-fn definition(args: &[String]) -> Result<(PathBuf, String)> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
+fn definition_path() -> Result<PathBuf> {
     if cfg!(target_os = "linux") {
         let config = xlatch_core::paths::default_config_dir()?;
         let root = config.parent().context("missing configuration root")?;
+        return Ok(root.join("systemd/user/xlatch.service"));
+    }
+    ensure!(
+        cfg!(target_os = "macos"),
+        "user services are supported on Linux and macOS"
+    );
+    let home = std::env::var_os("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home).join("Library/LaunchAgents/com.byteowlz.xlatch.plist"))
+}
+
+fn definition(args: &[String]) -> Result<(PathBuf, String)> {
+    let path = definition_path()?;
+    if cfg!(target_os = "linux") {
         let command = args
             .iter()
             .map(|arg| systemd_quote(arg))
             .collect::<Vec<_>>()
             .join(" ");
         return Ok((
-            root.join("systemd/user/xlatch.service"),
+            path,
             format!(
                 "[Unit]\nDescription=CrossLatch capability service\nAfter=network.target\n\n[Service]\nExecStart={command}\nRestart=on-failure\nUMask=0077\n\n[Install]\nWantedBy=default.target\n"
             ),
@@ -183,11 +192,35 @@ fn definition(args: &[String]) -> Result<(PathBuf, String)> {
         command.push_str("</string>");
     }
     Ok((
-        PathBuf::from(home).join("Library/LaunchAgents/com.byteowlz.xlatch.plist"),
+        path,
         format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>Label</key><string>com.byteowlz.xlatch</string><key>ProgramArguments</key><array>{command}</array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>Umask</key><integer>63</integer></dict></plist>\n"
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>Label</key><string>com.byteowlz.xlatch</string><key>ProgramArguments</key><array>{command}</array><key>LimitLoadToSessionType</key><array><string>Aqua</string><string>Background</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>Umask</key><integer>63</integer></dict></plist>\n"
         ),
     ))
+}
+
+/// Stop the running user instance so a replaced definition starts fresh.
+fn stop_loaded() -> Result<()> {
+    if cfg!(target_os = "linux") {
+        return checked("systemctl", &["--user", "stop", "xlatch.service"]);
+    }
+    let target = format!("{}/com.byteowlz.xlatch", domain()?);
+    if launchctl_present(&target)? {
+        checked("launchctl", &["bootout", &target])?;
+    }
+    Ok(())
+}
+
+fn remove_definition() -> Result<()> {
+    let path = definition_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+    std::fs::remove_file(&path)?;
+    if cfg!(target_os = "linux") {
+        checked("systemctl", &["--user", "daemon-reload"])?;
+    }
+    Ok(())
 }
 
 fn control(command: &Command) -> Result<()> {
@@ -205,7 +238,11 @@ fn control(command: &Command) -> Result<()> {
             args.push("--now");
         }
         args.push("xlatch.service");
-        return checked("systemctl", &args);
+        checked("systemctl", &args)?;
+        if matches!(command, Command::Disable) {
+            remove_definition()?;
+        }
+        return Ok(());
     }
     ensure!(
         cfg!(target_os = "macos"),
@@ -218,16 +255,12 @@ fn control(command: &Command) -> Result<()> {
         Command::Restart => checked("launchctl", &["kickstart", "-k", &target]),
         Command::Stop => checked("launchctl", &["kill", "SIGTERM", &target]),
         Command::Disable => {
-            checked("launchctl", &["disable", &target])?;
-            let loaded = Process::new("launchctl")
-                .args(["print", &target])
-                .output()?
-                .status
-                .success();
-            if loaded {
+            // Remove the definition even when no instance has been bootstrapped.
+            if launchctl_present(&target)? {
+                checked("launchctl", &["disable", &target])?;
                 checked("launchctl", &["bootout", &target])?;
             }
-            Ok(())
+            remove_definition()
         }
         _ => anyhow::bail!("expected a service control command"),
     }
@@ -237,7 +270,41 @@ fn domain() -> Result<String> {
     let output = Process::new("id").arg("-u").output()?;
     ensure!(output.status.success(), "cannot determine user ID");
     let uid: u32 = std::str::from_utf8(&output.stdout)?.trim().parse()?;
-    Ok(format!("gui/{uid}"))
+    select_domain(uid, launchctl_present)
+}
+
+fn select_domain(uid: u32, mut present: impl FnMut(&str) -> Result<bool>) -> Result<String> {
+    let mut available = None;
+    for domain in [format!("gui/{uid}"), format!("user/{uid}")] {
+        if !present(&domain)? {
+            continue;
+        }
+        // Keep controlling a background instance even if a GUI login appears later.
+        if present(&format!("{domain}/com.byteowlz.xlatch"))? {
+            return Ok(domain);
+        }
+        if available.is_none() {
+            available = Some(domain);
+        }
+    }
+    available.context("no accessible launchd user domain; log in as the service owner and retry")
+}
+
+fn launchctl_present(target: &str) -> Result<bool> {
+    let output = Process::new("launchctl")
+        .args(["print", target])
+        .output()
+        .context("probe launchd domain/service")?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        // launchd's service-absent and domain-unavailable codes, respectively.
+        Some(113 | 125) => Ok(false),
+        _ => anyhow::bail!(
+            "launchctl print {target} failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
 }
 
 fn checked(program: &str, args: &[&str]) -> Result<()> {
@@ -247,7 +314,8 @@ fn checked(program: &str, args: &[&str]) -> Result<()> {
         .with_context(|| format!("run {program}"))?;
     ensure!(
         status.success(),
-        "{program} failed ({status}); install the service with xlatch service enable first"
+        "{program} {} failed ({status})",
+        args.join(" ")
     );
     Ok(())
 }
@@ -272,4 +340,62 @@ pub fn systemd_quote(value: &str) -> String {
             .replace('\n', "\\n")
             .replace('\r', "\\r")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_domain;
+    use anyhow::{Result, ensure};
+
+    #[test]
+    fn unavailable_gui_uses_background_domain() -> Result<()> {
+        let mut queried = Vec::new();
+        let selected = select_domain(501, |target| {
+            queried.push(target.to_owned());
+            Ok(target == "user/501")
+        })?;
+        ensure!(
+            selected == "user/501",
+            "wrong background domain: {selected}"
+        );
+        ensure!(
+            queried == ["gui/501", "user/501", "user/501/com.byteowlz.xlatch"],
+            "unexpected probes: {queried:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn new_install_prefers_gui_when_available() -> Result<()> {
+        let selected = select_domain(501, |target| Ok(!target.ends_with("/com.byteowlz.xlatch")))?;
+        ensure!(selected == "gui/501", "wrong default domain: {selected}");
+        Ok(())
+    }
+
+    #[test]
+    fn existing_background_instance_wins_over_new_gui_login() -> Result<()> {
+        let selected = select_domain(501, |target| Ok(target != "gui/501/com.byteowlz.xlatch"))?;
+        ensure!(
+            selected == "user/501",
+            "lost existing background instance: {selected}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_domains_and_probe_errors_are_not_hidden() {
+        assert!(select_domain(501, |_| Ok(false)).is_err());
+        let result = select_domain(501, |_| anyhow::bail!("permission denied"));
+        assert!(result.is_err_and(|error| error.to_string() == "permission denied"));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn agent_allows_gui_and_background_sessions() -> Result<()> {
+        let (_, contents) = super::definition(&["/usr/local/bin/xlatch".into()])?;
+        ensure!(contents.contains(
+            "<key>LimitLoadToSessionType</key><array><string>Aqua</string><string>Background</string></array>"
+        ), "session types missing from agent");
+        Ok(())
+    }
 }
