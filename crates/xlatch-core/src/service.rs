@@ -27,6 +27,14 @@ pub fn dispatch(store: &mut Store, owner: &str, request: Request) -> Result<Valu
         Request::SaveChain { steps, title } => Ok(serde_json::to_value(
             store.save_chain(owner, &steps, &title)?,
         )?),
+        Request::InvokeGroup {
+            targets,
+            input,
+            idempotency_key,
+        } => job_response(store.invoke_group(owner, &targets, &input, &idempotency_key)?),
+        Request::SaveGroup { targets, title } => Ok(serde_json::to_value(
+            store.save_group(owner, &targets, &title)?,
+        )?),
         Request::Upload { request } => crate::uploads::dispatch(store, owner, request),
         Request::Park {
             id,

@@ -1,7 +1,7 @@
 //! Broker-owned scheduling: a parent grant delegates only its reviewed steps.
 use crate::{
     capability::{Execution, Job, Manifest},
-    composition::Step,
+    composition::{Step, Target},
     store::{Store, now},
 };
 use anyhow::{Context, Result, ensure};
@@ -9,23 +9,32 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 use serde_json::{Value, json};
 
 pub fn dependencies(conn: &Connection, manifest: &Manifest) -> Result<()> {
-    if let Execution::Compose { steps } = &manifest.execution {
-        for step in steps {
-            let (body, revision, status): (String, String, String) = conn
-                .query_row(
-                    "SELECT manifest,revision,status FROM capabilities WHERE id=?1",
-                    [&step.manifest.id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                )
-                .with_context(|| format!("missing composition step {}", step.manifest.id))?;
-            ensure!(
-                status == "active"
-                    && revision == step.revision
-                    && serde_json::from_str::<Manifest>(&body)? == step.manifest,
-                "composition step {} changed or is not active; review a new composition revision",
-                step.manifest.id
-            );
-        }
+    let dependencies: Vec<(&Manifest, &str)> = match &manifest.execution {
+        Execution::Compose { steps } => steps
+            .iter()
+            .map(|step| (&step.manifest, step.revision.as_str()))
+            .collect(),
+        Execution::FanOut { targets } => targets
+            .iter()
+            .map(|target| (&target.manifest, target.revision.as_str()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for (manifest, expected_revision) in dependencies {
+        let (body, revision, status): (String, String, String) = conn
+            .query_row(
+                "SELECT manifest,revision,status FROM capabilities WHERE id=?1",
+                [&manifest.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .with_context(|| format!("missing composition target {}", manifest.id))?;
+        ensure!(
+            status == "active"
+                && revision == expected_revision
+                && serde_json::from_str::<Manifest>(&body)? == *manifest,
+            "composition target {} changed or is not active; review a new composition revision",
+            manifest.id
+        );
     }
     Ok(())
 }
@@ -65,7 +74,7 @@ impl Store {
         Ok(())
     }
     pub(crate) fn advance_compositions(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("SELECT id FROM jobs WHERE status IN ('queued','running') AND json_extract(manifest,'$.execution.kind')='compose' AND NOT EXISTS (SELECT 1 FROM composition_steps s JOIN jobs child ON child.id=s.child_id WHERE s.parent_id=jobs.id AND child.status IN ('queued','running')) ORDER BY created_at,rowid LIMIT 64")?;
+        let mut stmt = self.conn.prepare("SELECT id FROM jobs WHERE status IN ('queued','running') AND json_extract(manifest,'$.execution.kind') IN ('compose','fan_out') AND NOT EXISTS (SELECT 1 FROM composition_steps s JOIN jobs child ON child.id=s.child_id WHERE s.parent_id=jobs.id AND child.status IN ('queued','running')) ORDER BY created_at,rowid LIMIT 64")?;
         let ids = stmt
             .query_map([], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -91,8 +100,11 @@ impl Store {
         self.authorize_job(parent)?;
         let manifest = self.composition_manifest(parent)?;
         dependencies(&self.conn, &manifest)?;
+        if let Execution::FanOut { targets } = &manifest.execution {
+            return self.advance_fan_out(parent, &manifest, targets);
+        }
         let Execution::Compose { steps } = &manifest.execution else {
-            anyhow::bail!("expected composition");
+            anyhow::bail!("expected composition")
         };
         let last: Option<(u32,String)> = self.conn.query_row("SELECT position,child_id FROM composition_steps WHERE parent_id=?1 ORDER BY position DESC LIMIT 1",[&parent.id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
         let Some((position, id)) = last else {
@@ -132,6 +144,80 @@ impl Store {
             _ => anyhow::bail!("invalid step state"),
         }
     }
+    fn advance_fan_out(&self, parent: &Job, manifest: &Manifest, targets: &[Target]) -> Result<()> {
+        let count: u32 = self.conn.query_row(
+            "SELECT count(*) FROM composition_steps WHERE parent_id=?1",
+            [&parent.id],
+            |row| row.get(0),
+        )?;
+        if count == 0 {
+            self.conn
+                .execute("UPDATE jobs SET status='running' WHERE id=?1", [&parent.id])?;
+            for (position, target) in targets.iter().enumerate() {
+                self.enqueue_target(
+                    parent,
+                    position as u32,
+                    &target.manifest,
+                    &target.revision,
+                    &parent.input,
+                )?;
+            }
+            return Ok(());
+        }
+        ensure!(
+            count as usize == targets.len(),
+            "fan-out receipts are incomplete"
+        );
+        let mut statement = self.conn.prepare("SELECT j.capability_id,j.revision,j.status,j.result,j.error FROM composition_steps s JOIN jobs j ON j.id=s.child_id WHERE s.parent_id=?1 ORDER BY s.position")?;
+        let rows = statement
+            .query_map([&parent.id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some((index, row)) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| matches!(row.2.as_str(), "failed" | "cancelled"))
+        {
+            return self.end_composition(
+                parent,
+                &row.2,
+                None,
+                Some(&format!(
+                    "Target {} ({}): {}",
+                    index + 1,
+                    row.0,
+                    row.4.as_deref().unwrap_or(&row.2)
+                )),
+            );
+        }
+        ensure!(
+            rows.iter().all(|row| row.2 == "succeeded"),
+            "fan-out target is not terminal"
+        );
+        let results = rows
+            .into_iter()
+            .map(|(capability_id, revision, _, result, _)| {
+                Ok(json!({
+                    "capability_id": capability_id,
+                    "revision": revision,
+                    "result": serde_json::from_str::<Value>(&result.context("successful target has no result")?)?
+                }))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let result = json!({"results": results});
+        ensure!(
+            jsonschema::validator_for(&manifest.output_schema)?.is_valid(&result),
+            "fan-out result violates output schema"
+        );
+        self.end_composition(parent, "succeeded", Some(&result), None)
+    }
     fn enqueue_step(
         &self,
         parent: &Job,
@@ -144,11 +230,21 @@ impl Store {
             serde_json::to_vec(&input)?.len() <= crate::capability::MAX_BYTES,
             "mapped input exceeds request limit"
         );
-        let upload = self.validate_file_input(&parent.owner, &step.manifest, &input)?;
+        self.enqueue_target(parent, position, &step.manifest, &step.revision, &input)
+    }
+    fn enqueue_target(
+        &self,
+        parent: &Job,
+        position: u32,
+        manifest: &Manifest,
+        revision: &str,
+        input: &Value,
+    ) -> Result<()> {
+        let upload = self.validate_file_input(&parent.owner, manifest, input)?;
         let id = uuid::Uuid::new_v4().to_string();
         // Distinct reserved owner-scoped key: internal creation is never a caller invocation.
         let key = format!("composition:{}:{position}", parent.id);
-        self.conn.execute("INSERT INTO jobs(id,capability_id,revision,manifest,owner,status,input,idempotency_key,created_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?7,?8)",params![id,step.manifest.id,step.revision,serde_json::to_string(&step.manifest)?,parent.owner,serde_json::to_string(&input)?,key,now()])?;
+        self.conn.execute("INSERT INTO jobs(id,capability_id,revision,manifest,owner,status,input,idempotency_key,created_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?7,?8)",params![id,manifest.id,revision,serde_json::to_string(manifest)?,parent.owner,serde_json::to_string(input)?,key,now()])?;
         self.conn.execute(
             "INSERT INTO composition_steps VALUES(?1,?2,?3)",
             params![parent.id, position, id],

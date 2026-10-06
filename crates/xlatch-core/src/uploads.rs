@@ -272,6 +272,7 @@ impl Store {
         let mut schema_input = input.clone();
         let first = match &manifest.execution {
             Execution::Compose { steps } => &steps.first().context("empty composition")?.manifest,
+            Execution::FanOut { targets } => &targets.first().context("empty fan-out")?.manifest,
             _ => manifest,
         };
         ensure!(
@@ -285,6 +286,15 @@ impl Store {
             );
             return Ok(None);
         };
+        if let Execution::FanOut { targets } = &manifest.execution {
+            ensure!(
+                targets.iter().all(|target| {
+                    matches!(target.manifest.execution, Execution::SaveFile { .. })
+                        || target.manifest.file_input == Some(FileInput::Path)
+                }),
+                "every fan-out target needs file-path support for large uploads"
+            );
+        }
         ensure!(
             matches!(first.execution, Execution::SaveFile { .. })
                 || first.file_input == Some(FileInput::Path),

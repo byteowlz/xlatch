@@ -23,7 +23,9 @@ pub async fn execute(
     }
     let job = &prepared_job;
     let result = match &manifest.execution {
-        Execution::Compose { .. } => anyhow::bail!("composition must be scheduled by the broker"),
+        Execution::Compose { .. } | Execution::FanOut { .. } => {
+            anyhow::bail!("composition must be scheduled by the broker")
+        }
         Execution::Echo => job.input.clone(),
         Execution::SaveFile { directory } => {
             tokio::select! {

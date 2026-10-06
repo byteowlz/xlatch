@@ -16,6 +16,15 @@ pub struct Step {
     /// Input wiring from the original input or previous result.
     pub input: Binding,
 }
+/// One independently reviewed fan-out destination.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Target {
+    /// Snapshot of an independently registered leaf capability.
+    pub manifest: Manifest,
+    /// Expected digest of that snapshot.
+    pub revision: String,
+}
 /// Wiring contains data only: no scripts, expressions, implicit conversions or routing heuristics.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -123,6 +132,114 @@ pub fn validate(manifest: &Manifest, steps: &[Step]) -> Result<()> {
         "composition timeout must cover all step timeouts"
     );
     Ok(())
+}
+/// Validate independent destinations that all receive the original input.
+pub fn validate_fan_out(manifest: &Manifest, targets: &[Target]) -> Result<()> {
+    ensure!(
+        (2..=16).contains(&targets.len()),
+        "fan_out requires 2–16 leaf targets"
+    );
+    let mut timeout = 0;
+    for target in targets {
+        ensure!(
+            target.manifest.id != manifest.id
+                && !matches!(
+                    target.manifest.execution,
+                    Execution::Compose { .. } | Execution::FanOut { .. }
+                ),
+            "nested or cyclic compositions are not supported"
+        );
+        target.manifest.validate()?;
+        ensure!(
+            target.manifest.revision()? == target.revision,
+            "target snapshot digest mismatch"
+        );
+        timeout = timeout.max(target.manifest.timeout_seconds);
+    }
+    ensure!(
+        manifest.input_schema == fan_out_input_schema(targets),
+        "fan-out input schema must bind every target"
+    );
+    ensure!(
+        manifest.output_schema == fan_out_output_schema(),
+        "fan-out output schema must describe branch receipts"
+    );
+    ensure!(
+        manifest.accepts == fan_out_accepts(targets),
+        "fan-out MIME types must be accepted by every target"
+    );
+    ensure!(
+        timeout <= manifest.timeout_seconds,
+        "fan-out timeout must cover every target timeout"
+    );
+    Ok(())
+}
+/// Exact conjunction used by a fan-out parent's public input contract.
+#[must_use]
+pub fn fan_out_input_schema(targets: &[Target]) -> Value {
+    json!({"allOf": targets.iter().map(|target| target.manifest.input_schema.clone()).collect::<Vec<_>>()})
+}
+/// Stable aggregate result contract for fan-out parents.
+#[must_use]
+pub fn fan_out_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["results"],
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["capability_id", "revision", "result"],
+                    "properties": {
+                        "capability_id": {"type": "string"},
+                        "revision": {"type": "string"},
+                        "result": true
+                    }
+                }
+            }
+        }
+    })
+}
+/// MIME patterns accepted by every target, preserving the narrowest matching pattern.
+#[must_use]
+pub fn fan_out_accepts(targets: &[Target]) -> Vec<String> {
+    fn intersection(left: &str, right: &str) -> Option<String> {
+        let (left_type, left_subtype) = left.split_once('/')?;
+        let (right_type, right_subtype) = right.split_once('/')?;
+        let media_type = match (left_type, right_type) {
+            ("*", value) | (value, "*") => value,
+            (a, b) if a == b => a,
+            _ => return None,
+        };
+        let subtype = match (left_subtype, right_subtype) {
+            ("*", value) | (value, "*") => value,
+            (a, b) if a == b => a,
+            _ => return None,
+        };
+        Some(format!("{media_type}/{subtype}"))
+    }
+    let Some(first) = targets.first() else {
+        return Vec::new();
+    };
+    let mut accepted = first.manifest.accepts.clone();
+    for target in &targets[1..] {
+        accepted = accepted
+            .iter()
+            .flat_map(|left| {
+                target
+                    .manifest
+                    .accepts
+                    .iter()
+                    .filter_map(|right| intersection(left, right))
+            })
+            .collect();
+        accepted.sort();
+        accepted.dedup();
+    }
+    accepted
 }
 /// Conservative proof for ordinary object/scalar contracts; unfamiliar constraints need explicit wiring.
 #[must_use]

@@ -1529,6 +1529,59 @@ fn one_off_chain_requires_each_grant_and_never_activates_targets() -> Result<()>
 }
 
 #[test]
+fn fan_out_sends_original_input_to_every_target_and_can_be_saved() -> Result<()> {
+    use xlatch_core::{chain::Reference, composition::Binding};
+    let fixture = Fixture::new()?;
+    let mut store = fixture.store()?;
+    composed_fixture(&mut store, Binding::Previous)?;
+    let (owner, _) = pair(&mut store, 117)?;
+    let second = store.capability("second")?;
+    let refs = vec![
+        Reference {
+            capability_id: "echo".into(),
+            revision: store.capability("echo")?.revision,
+        },
+        Reference {
+            capability_id: "second".into(),
+            revision: second.revision.clone(),
+        },
+    ];
+    let input = json!({"text":"broadcast"});
+    assert!(store.invoke_group(&owner, &refs, &input, "group").is_err());
+    store.grant(&owner, "second", &second.revision)?;
+    let parent = store.invoke_group(&owner, &refs, &input, "group")?;
+    assert_eq!(
+        store.invoke_group(&owner, &refs, &input, "group")?.id,
+        parent.id
+    );
+
+    let first = claim_step(&mut store)?.context("first target")?;
+    assert_eq!(first.job.input, input);
+    complete_step(&mut store, &first, json!({"text":"first"}))?;
+    let second_job = claim_step(&mut store)?.context("second target")?;
+    assert_eq!(second_job.job.input, input);
+    complete_step(&mut store, &second_job, json!({"text":"second"}))?;
+    assert!(claim_step(&mut store)?.is_none());
+
+    let completed = store.job(&owner, &parent.id)?;
+    assert_eq!(completed.status, "succeeded");
+    assert_eq!(
+        completed.result.as_ref().unwrap()["results"][0]["result"],
+        json!({"text":"first"})
+    );
+    assert_eq!(
+        completed.result.as_ref().unwrap()["results"][1]["result"],
+        json!({"text":"second"})
+    );
+    assert_eq!(store.composition_steps(&owner, &parent.id)?.len(), 2);
+
+    let saved = store.save_group(&owner, &refs, "Research and slides")?;
+    assert_eq!(saved.status, "pending");
+    assert!(matches!(saved.manifest.execution, Execution::FanOut { .. }));
+    Ok(())
+}
+
+#[test]
 fn one_off_chain_stops_after_grant_revocation() -> Result<()> {
     use xlatch_core::{chain::Reference, composition::Binding};
     let fixture = Fixture::new()?;

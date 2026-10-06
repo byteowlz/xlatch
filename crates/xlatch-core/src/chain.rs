@@ -1,7 +1,7 @@
 //! One-off chains preserve direct grants; they never create active registry entries.
 use crate::{
     capability::{Capability, Execution, Job, Manifest},
-    composition::{Binding, Step},
+    composition::{Binding, Step, Target},
     store::{Store, now},
 };
 use anyhow::{Context, Result, ensure};
@@ -31,7 +31,10 @@ impl Store {
                 "chain step changed or permission denied"
             );
             ensure!(
-                !matches!(cap.manifest.execution, Execution::Compose { .. }),
+                !matches!(
+                    cap.manifest.execution,
+                    Execution::Compose { .. } | Execution::FanOut { .. }
+                ),
                 "select leaf actions for a chain"
             );
             if let Some(previous) = steps.last() {
@@ -66,7 +69,10 @@ impl Store {
             .into_iter()
             .filter(|c| {
                 c.status == "active"
-                    && !matches!(c.manifest.execution, Execution::Compose { .. })
+                    && !matches!(
+                        c.manifest.execution,
+                        Execution::Compose { .. } | Execution::FanOut { .. }
+                    )
                     && crate::composition::compatible(
                         &previous.manifest.output_schema,
                         &c.manifest.input_schema,
@@ -193,18 +199,170 @@ impl Store {
     }
     pub(crate) fn authorize_transient_chain(&self, job: &Job) -> Result<()> {
         let manifest = self.composition_manifest(job)?;
-        let Execution::Compose { steps } = manifest.execution else {
-            anyhow::bail!("invalid chain job");
+        let revisions: Vec<(String, String)> = match manifest.execution {
+            Execution::Compose { steps } => steps
+                .into_iter()
+                .map(|step| (step.manifest.id, step.revision))
+                .collect(),
+            Execution::FanOut { targets } => targets
+                .into_iter()
+                .map(|target| (target.manifest.id, target.revision))
+                .collect(),
+            _ => anyhow::bail!("invalid transient composition job"),
         };
-        for step in steps {
-            let cap = self.capability(&step.manifest.id)?;
+        for (id, revision) in revisions {
+            let cap = self.capability(&id)?;
             ensure!(
                 cap.status == "active"
-                    && cap.revision == step.revision
+                    && cap.revision == revision
                     && self.has_grant(&job.owner, &cap.manifest.id, &cap.revision)?,
-                "chain step permission changed"
+                "composition target permission changed"
             );
         }
         Ok(())
+    }
+
+    fn group_targets(&self, owner: &str, refs: &[Reference]) -> Result<Vec<Target>> {
+        ensure!((2..=16).contains(&refs.len()), "select 2–16 targets");
+        let mut seen = std::collections::BTreeSet::new();
+        let mut targets = Vec::with_capacity(refs.len());
+        for reference in refs {
+            ensure!(
+                seen.insert(&reference.capability_id),
+                "select each target once"
+            );
+            let capability = self.capability(&reference.capability_id)?;
+            ensure!(
+                capability.status == "active"
+                    && capability.revision == reference.revision
+                    && self.has_grant(owner, &reference.capability_id, &reference.revision)?,
+                "group target changed or permission denied"
+            );
+            ensure!(
+                !matches!(
+                    capability.manifest.execution,
+                    Execution::Compose { .. } | Execution::FanOut { .. }
+                ),
+                "select leaf actions for a group"
+            );
+            targets.push(Target {
+                manifest: capability.manifest,
+                revision: capability.revision,
+            });
+        }
+        ensure!(
+            !crate::composition::fan_out_accepts(&targets).is_empty(),
+            "selected targets do not accept a common content type"
+        );
+        Ok(targets)
+    }
+
+    fn group_manifest(
+        &self,
+        owner: &str,
+        refs: &[Reference],
+        id: String,
+        title: String,
+    ) -> Result<Manifest> {
+        let targets = self.group_targets(owner, refs)?;
+        let file_input = targets
+            .iter()
+            .all(|target| {
+                matches!(target.manifest.execution, Execution::SaveFile { .. })
+                    || target.manifest.file_input == Some(crate::uploads::FileInput::Path)
+            })
+            .then_some(crate::uploads::FileInput::Path);
+        let manifest = Manifest {
+            icon: None,
+            file_input,
+            id,
+            title,
+            description: "Send the same content to every selected target".into(),
+            accepts: crate::composition::fan_out_accepts(&targets),
+            input_schema: crate::composition::fan_out_input_schema(&targets),
+            output_schema: crate::composition::fan_out_output_schema(),
+            timeout_seconds: targets
+                .iter()
+                .map(|target| target.manifest.timeout_seconds)
+                .max()
+                .context("missing target")?,
+            execution: Execution::FanOut { targets },
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    /// Submit a reusable fan-out target for the normal approval flow.
+    pub fn save_group(&self, owner: &str, refs: &[Reference], title: &str) -> Result<Capability> {
+        ensure!(
+            !title.trim().is_empty() && title.len() <= 120,
+            "name must contain 1–120 bytes"
+        );
+        let manifest = self.group_manifest(
+            owner,
+            refs,
+            format!("group.{}", uuid::Uuid::new_v4()),
+            title.trim().into(),
+        )?;
+        self.register(&manifest)
+    }
+
+    /// Atomically enqueue a one-off fan-out without registering a capability.
+    pub fn invoke_group(
+        &self,
+        owner: &str,
+        refs: &[Reference],
+        input: &Value,
+        key: &str,
+    ) -> Result<Job> {
+        ensure!(
+            !key.is_empty() && key.len() <= 120,
+            "invalid idempotency key"
+        );
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let manifest =
+            self.group_manifest(owner, refs, "one-off-group".into(), "Shared group".into())?;
+        let revision = manifest.revision()?;
+        ensure!(
+            serde_json::to_vec(input)?.len() <= crate::capability::MAX_BYTES,
+            "invalid group input"
+        );
+        ensure!(
+            jsonschema::validator_for(&manifest.input_schema)?.is_valid(input),
+            "input does not match every group target"
+        );
+        let upload = self.validate_file_input(owner, &manifest, input)?;
+        if let Some(id) = self
+            .conn
+            .query_row(
+                "SELECT id FROM jobs WHERE owner=?1 AND idempotency_key=?2",
+                params![owner, key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            let job = self.job(owner, &id)?;
+            ensure!(
+                self.is_transient_chain(&id)? && job.revision == revision && job.input == *input,
+                "idempotency key belongs to another invocation"
+            );
+            tx.commit()?;
+            return Ok(job);
+        }
+        let queued: i64 = self.conn.query_row(
+            "SELECT count(*) FROM jobs WHERE status IN ('queued','running')",
+            [],
+            |row| row.get(0),
+        )?;
+        ensure!(queued + (refs.len() as i64) < 1000, "job queue is full");
+        let id = uuid::Uuid::new_v4().to_string();
+        self.conn.execute("INSERT INTO jobs(id,capability_id,revision,manifest,owner,status,input,idempotency_key,created_at) VALUES(?1,?2,?3,?4,?5,'queued',?6,?7,?8)",params![id,manifest.id,revision,serde_json::to_string(&manifest)?,owner,serde_json::to_string(input)?,key,now()])?;
+        self.conn
+            .execute("INSERT INTO transient_compositions VALUES(?1)", [&id])?;
+        self.bind_upload(&id, upload.as_deref())?;
+        self.event(&id, owner, "queued")?;
+        let job = self.job(owner, &id)?;
+        tx.commit()?;
+        Ok(job)
     }
 }

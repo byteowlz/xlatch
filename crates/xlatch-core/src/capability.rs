@@ -45,6 +45,11 @@ pub enum Execution {
         /// Exact leaf contracts and their input wiring.
         steps: Vec<crate::composition::Step>,
     },
+    /// Run reviewed independent capabilities with the same original input.
+    FanOut {
+        /// Exact leaf contracts that each receive the original input.
+        targets: Vec<crate::composition::Target>,
+    },
     /// Return the submitted JSON without side effects.
     Echo,
     /// Save shared content within a fixed, operator-approved directory.
@@ -102,6 +107,9 @@ impl Manifest {
         );
         if let Execution::Compose { steps } = &self.execution {
             crate::composition::validate(self, steps)?;
+        }
+        if let Execution::FanOut { targets } = &self.execution {
+            crate::composition::validate_fan_out(self, targets)?;
         }
         validate_schema(&self.input_schema)?;
         validate_schema(&self.output_schema)?;
@@ -167,6 +175,11 @@ impl Manifest {
                     step.manifest.validate_host_binding()?;
                 }
             }
+            Execution::FanOut { targets } => {
+                for target in targets {
+                    target.manifest.validate_host_binding()?;
+                }
+            }
             Execution::Echo => {}
         }
         Ok(())
@@ -178,6 +191,9 @@ impl Manifest {
         match &self.execution {
             Execution::Command { .. } => true,
             Execution::Compose { steps } => steps.iter().any(|s| s.manifest.executes_commands()),
+            Execution::FanOut { targets } => targets
+                .iter()
+                .any(|target| target.manifest.executes_commands()),
             _ => false,
         }
     }
@@ -337,6 +353,22 @@ pub enum Request {
     SaveChain {
         /// Ordered exact leaf revisions.
         steps: Vec<crate::chain::Reference>,
+        /// Display name for the proposed target.
+        title: String,
+    },
+    /// Run several directly granted targets with the same original input.
+    InvokeGroup {
+        /// Exact leaf revisions, in display order.
+        targets: Vec<crate::chain::Reference>,
+        /// Original share content sent to every target.
+        input: Value,
+        /// Stable retry identity.
+        idempotency_key: String,
+    },
+    /// Submit a reusable fan-out group for normal approval; never activates it.
+    SaveGroup {
+        /// Exact leaf revisions, in display order.
+        targets: Vec<crate::chain::Reference>,
         /// Display name for the proposed target.
         title: String,
     },

@@ -23,3 +23,5 @@
 **Preparation**: An optional exact granted capability invoked when content is parked. Its durable Job remains linked to the parked item; successful typed output becomes cached context while failure never replaces or removes the original content.
 
 **Composition**: A capability that passes results through an ordered set of exact capability revisions, with its own approval and grants.
+
+**Fan-out group**: A capability that sends the same original typed input to 2–16 exact leaf capability revisions. Branches run independently and the parent records one receipt and result per target. A one-off group requires direct grants to every leaf; a saved group has its own approval and grant.

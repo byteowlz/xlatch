@@ -30,8 +30,8 @@ impl Store {
         reason: &str,
     ) -> Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("INSERT INTO events(job_id,owner,status) SELECT id,owner,'failed' FROM jobs WHERE status='running' AND json_extract(manifest,'$.execution.kind')<>'compose' AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",[expired_before])?;
-        tx.execute("UPDATE jobs SET status='failed',error=?2 WHERE status='running' AND json_extract(manifest,'$.execution.kind')<>'compose' AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",params![expired_before,reason])?;
+        tx.execute("INSERT INTO events(job_id,owner,status) SELECT id,owner,'failed' FROM jobs WHERE status='running' AND json_extract(manifest,'$.execution.kind') NOT IN ('compose','fan_out') AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",[expired_before])?;
+        tx.execute("UPDATE jobs SET status='failed',error=?2 WHERE status='running' AND json_extract(manifest,'$.execution.kind') NOT IN ('compose','fan_out') AND (?1 IS NULL OR id IN (SELECT job_id FROM executor_leases WHERE expires_at<?1))",params![expired_before,reason])?;
         tx.execute(
             "DELETE FROM executor_leases WHERE ?1 IS NULL OR expires_at<?1",
             [expired_before],
@@ -45,7 +45,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let selected:Option<(String,String)>=tx.query_row("SELECT id,manifest FROM jobs WHERE status='queued' AND json_extract(manifest,'$.execution.kind')<>'compose' ORDER BY created_at,rowid LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        let selected:Option<(String,String)>=tx.query_row("SELECT id,manifest FROM jobs WHERE status='queued' AND json_extract(manifest,'$.execution.kind') NOT IN ('compose','fan_out') ORDER BY created_at,rowid LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
         let Some((id, body)) = selected else {
             return Ok(None);
         };
