@@ -25,6 +25,8 @@ final class ShareViewController: UIViewController {
     @Published var disabledActionIDs: Set<String> = []
     @Published var deviceID: String?
     @Published var chain: [Capability] = []
+    @Published var selectingGroup = false
+    @Published var selectedGroupIDs: Set<String> = []
     @Published var nextSteps: [Capability] = []
     @Published var findingSteps = false
     @Published var savedMessage: String?
@@ -71,7 +73,7 @@ final class ShareViewController: UIViewController {
     }
     func selectServer(_ id: String) async {
         guard connection?.id != id, sending == nil else { return }
-        loading = true; error = nil; clearChain()
+        loading = true; error = nil; clearChain(); cancelGroupSelection()
         defer { loading = false }
         do {
             try CredentialStore.select(id)
@@ -88,14 +90,20 @@ final class ShareViewController: UIViewController {
     var choices: [Capability] {
         let source = chain.isEmpty ? capabilities.filter { capability in content.map { capability.accepts($0.mime) } ?? false } : nextSteps
         let enabled = source.filter { !disabledActionIDs.contains($0.id) }
-        return deviceID.map { ShareActionPreferences.ordered(enabled, deviceID: $0) } ?? enabled
+        let ordered = deviceID.map { ShareActionPreferences.ordered(enabled, deviceID: $0) } ?? enabled
+        return selectingGroup ? ordered.filter(Self.isLeaf) : ordered
+    }
+    var selectedGroup: [Capability] { choices.filter { selectedGroupIDs.contains($0.id) } }
+    private static func isLeaf(_ capability: Capability) -> Bool {
+        guard let kind = capability.manifest.execution?.kind else { return false }
+        return !["compose", "fan_out"].contains(kind)
     }
     func iconOverride(for capabilityID: String) -> ActionIconOverride? {
         deviceID.flatMap { ShareActionPreferences.icon(for: capabilityID, deviceID: $0) }
     }
     func addStep(_ capability: Capability) async {
-        guard sending == nil, !findingSteps, chain.count < 16, capability.manifest.execution?.kind != nil,
-              capability.manifest.execution?.kind != "compose", choices.contains(capability) else { return }
+        guard !selectingGroup, sending == nil, !findingSteps, chain.count < 16, capability.manifest.execution?.kind != nil,
+              Self.isLeaf(capability), choices.contains(capability) else { return }
         chain.append(capability)
         await refreshSteps()
     }
@@ -106,6 +114,18 @@ final class ShareViewController: UIViewController {
     }
     func clearChain() {
         selectionVersion = UUID(); chain = []; nextSteps = []; findingSteps = false; error = nil; savedMessage = nil
+    }
+    func beginGroupSelection() {
+        guard sending == nil, chain.isEmpty else { return }
+        selectingGroup = true; selectedGroupIDs = []; error = nil; savedMessage = nil
+    }
+    func cancelGroupSelection() {
+        selectingGroup = false; selectedGroupIDs = []
+    }
+    func toggleGroupTarget(_ capability: Capability) {
+        guard selectingGroup, sending == nil, Self.isLeaf(capability) else { return }
+        if selectedGroupIDs.contains(capability.id) { selectedGroupIDs.remove(capability.id) }
+        else if selectedGroupIDs.count < 16 { selectedGroupIDs.insert(capability.id) }
     }
     func refreshSteps() async {
         let version = UUID(); selectionVersion = version
@@ -128,6 +148,32 @@ final class ShareViewController: UIViewController {
             savedMessage = "Saved for approval. Open xlatch to approve the new target and grant access."
         } catch { self.error = error.localizedDescription }
     }
+    func saveGroup(title: String) async {
+        let targets = selectedGroup
+        guard targets.count >= 2, sending == nil else { return }
+        sending = "save-group"; defer { sending = nil }
+        do {
+            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server first.") }
+            let references = targets.map { ["capability_id": $0.id, "revision": $0.revision] }
+            let _: Capability = try await APIClient(connection: connection).rpc(["op": "save_group", "targets": references, "title": title])
+            savedMessage = "Saved for approval. Open xlatch to approve the new target and grant access."
+            cancelGroupSelection()
+        } catch { self.error = error.localizedDescription }
+    }
+    func sendGroup() async {
+        let targets = selectedGroup
+        guard targets.count >= 2, sending == nil, let input = content else { return }
+        sending = "send-group"; error = nil; defer { sending = nil; uploadingID = nil }
+        do {
+            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
+            let keyID = targets.map { $0.id + "@" + $0.revision }.joined(separator: "+") + (includePageText ? ":page" : ":original")
+            let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
+            uploadingID = key
+            receipt = try await OutboxDelivery.shared.submit(input, capability: targets[0], connection: connection, id: key, group: targets)
+            try await observeReceipt(keyID: keyID, connection: connection)
+            sent = true
+        } catch { self.error = error.localizedDescription }
+    }
     func send(_ capability: Capability) async {
         guard sending == nil, !findingSteps, chain.count < 16, choices.contains(capability), let input = content else { return }
         sending = capability.id; error = nil; defer { sending = nil; uploadingID = nil }
@@ -138,28 +184,30 @@ final class ShareViewController: UIViewController {
             let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
             uploadingID = key
             receipt = try await OutboxDelivery.shared.submit(input, capability: steps[0], connection: connection, id: key, chain: chain.isEmpty ? nil : steps)
-            if let jobID = receipt?.jobID {
-                let client = try APIClient(connection: connection)
-                let terminal: Job?
-                do {
-                    terminal = try await ImmediateJobObservation.wait(for: jobID) { id in
-                        try await client.rpc(["op": "job", "id": id])
-                    }
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    // The invocation is durably accepted. A transient status-read failure
-                    // must not turn it into a duplicate invocation.
-                    terminal = nil
-                }
-                if let terminal, terminal.status != "succeeded" {
-                    requestKeys.removeValue(forKey: keyID)
-                    receipt = nil
-                    throw ClientError.message(ImmediateJobObservation.failureMessage(for: terminal))
-                }
-            }
+            try await observeReceipt(keyID: keyID, connection: connection)
             sent = true
         } catch { self.error = error.localizedDescription }
+    }
+    private func observeReceipt(keyID: String, connection: Connection) async throws {
+        guard let jobID = receipt?.jobID else { return }
+        let client = try APIClient(connection: connection)
+        let terminal: Job?
+        do {
+            terminal = try await ImmediateJobObservation.wait(for: jobID) { id in
+                try await client.rpc(["op": "job", "id": id])
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // The invocation is durably accepted. A transient status-read failure
+            // must not turn it into a duplicate invocation.
+            terminal = nil
+        }
+        if let terminal, terminal.status != "succeeded" {
+            requestKeys.removeValue(forKey: keyID)
+            receipt = nil
+            throw ClientError.message(ImmediateJobObservation.failureMessage(for: terminal))
+        }
     }
     func park() async {
         guard sending == nil, let original = content else { return }
@@ -201,6 +249,8 @@ struct ShareView: View {
     @ObservedObject var model: ShareModel
     @State private var namingChain = false
     @State private var chainName = ""
+    @State private var namingGroup = false
+    @State private var groupName = ""
     var body: some View {
         NavigationStack {
             Group {
@@ -208,15 +258,30 @@ struct ShareView: View {
                 else { actionList }
             }
             .navigationTitle("xlatch").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) {
-                Button("Close") { model.done() }.disabled(model.sending != nil)
-            } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { model.done() }.disabled(model.sending != nil)
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    if model.chain.isEmpty && model.content != nil {
+                        Button(model.selectingGroup ? "Cancel" : "Select multiple") {
+                            if model.selectingGroup { model.cancelGroupSelection() }
+                            else { model.beginGroupSelection() }
+                        }.disabled(model.sending != nil || model.loading)
+                    }
+                }
+            }
         }
         .alert("Save chain as target", isPresented: $namingChain) {
             TextField("Target name", text: $chainName)
             Button("Submit for approval") { Task { await model.saveChain(title: chainName) } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("The new target needs approval before it becomes available.") }
+        .alert("Save group as target", isPresented: $namingGroup) {
+            TextField("Target name", text: $groupName)
+            Button("Submit for approval") { Task { await model.saveGroup(title: groupName) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Every share will be sent independently to all selected targets. The new target needs approval before it becomes available.") }
         .tint(colorScheme == .dark
             ? Color(red: 0.38, green: 0.85, blue: 0.68)
             : Color(red: 0.12, green: 0.43, blue: 0.34))
@@ -258,11 +323,12 @@ struct ShareView: View {
                 }
             }
             if !model.chain.isEmpty { chainSection }
+            if model.selectingGroup { groupSection }
             if let message = model.savedMessage { Section { Text(message) } }
             if model.pageInput != nil {
                 Section {
                     Toggle("Include Safari page text", isOn: $model.includePageText)
-                        .disabled(model.sending != nil || !model.chain.isEmpty)
+                        .disabled(model.sending != nil || !model.chain.isEmpty || model.selectingGroup)
                 } footer: { Text("Include the page title and text along with its URL.") }
             }
             if let error = model.error {
@@ -278,6 +344,29 @@ struct ShareView: View {
             else if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
             if model.content != nil { targets }
         }
+    }
+    private var groupSection: some View {
+        Section {
+            if model.selectedGroup.isEmpty {
+                Text("Choose at least two targets below.").foregroundStyle(.secondary)
+            } else {
+                Text(model.selectedGroup.map { $0.manifest.title }.joined(separator: " + "))
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Button {
+                Task { await model.sendGroup() }
+            } label: {
+                Label(model.sending == "send-group" ? "Sending…" : "Send to \(model.selectedGroup.count)", systemImage: "paperplane.fill")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .disabled(model.selectedGroup.count < 2 || model.sending != nil)
+            Button("Save selection as target…", systemImage: "square.and.arrow.down") {
+                groupName = model.selectedGroup.map { $0.manifest.title }.joined(separator: " + ")
+                namingGroup = true
+            }
+            .disabled(model.selectedGroup.count < 2 || model.sending != nil)
+        } header: { Text("Multiple targets") }
+        footer: { Text("Each target receives the original item. Use a chain when one action should consume another action’s result.") }
     }
     private var chainSection: some View {
         Section {
@@ -307,8 +396,11 @@ struct ShareView: View {
             ForEach(model.choices) { capability in
                 ShareTargetRow(model: model, capability: capability)
             }
-        } header: { Text(model.chain.isEmpty ? "Choose an action" : "Send to next target") }
-        footer: { if model.chain.isEmpty { Text("Tap to send. Swipe left or use the action menu to start a chain.") } }
+        } header: { Text(model.selectingGroup ? "Select targets" : (model.chain.isEmpty ? "Choose an action" : "Send to next target")) }
+        footer: {
+            if model.selectingGroup { Text("Tap targets to select them. The normal one-tap send returns when you cancel selection.") }
+            else if model.chain.isEmpty { Text("Tap to send. Select multiple sends the original item to several targets; Add step builds a chain.") }
+        }
     }
 }
 
@@ -316,21 +408,28 @@ private struct ShareTargetRow: View {
     @ObservedObject var model: ShareModel
     let capability: Capability
     private var canExtend: Bool {
-        capability.manifest.execution?.kind != nil && capability.manifest.execution?.kind != "compose" && model.chain.count < 15
+        guard let kind = capability.manifest.execution?.kind else { return false }
+        return !["compose", "fan_out"].contains(kind) && model.chain.count < 15
     }
     var body: some View {
         HStack {
-            Button { Task { await model.send(capability) } } label: {
+            Button {
+                if model.selectingGroup { model.toggleGroupTarget(capability) }
+                else { Task { await model.send(capability) } }
+            } label: {
                 HStack {
                     CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
                     Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if model.sending == capability.id { ProgressView() }
+                    if model.selectingGroup {
+                        Image(systemName: model.selectedGroupIDs.contains(capability.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.title3).foregroundStyle(model.selectedGroupIDs.contains(capability.id) ? Color.accentColor : Color.secondary)
+                    } else if model.sending == capability.id { ProgressView() }
                     else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
-            if canExtend {
+            if canExtend && !model.selectingGroup {
                 Menu {
                     Button("Add step", systemImage: "link") { Task { await model.addStep(capability) } }
                 } label: { Image(systemName: "ellipsis.circle").frame(minWidth: 44, minHeight: 44) }
@@ -339,12 +438,12 @@ private struct ShareTargetRow: View {
         }.padding(.vertical, 6)
         .disabled(model.sending != nil || model.loading || model.findingSteps)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if canExtend {
+            if canExtend && !model.selectingGroup {
                 Button { Task { await model.addStep(capability) } } label: {
                     Label("Add step", systemImage: "link")
                 }.tint(.teal)
             }
         }
-        .accessibilityAction(named: "Add step") { if canExtend { Task { await model.addStep(capability) } } }
+        .accessibilityAction(named: "Add step") { if canExtend && !model.selectingGroup { Task { await model.addStep(capability) } } }
     }
 }
