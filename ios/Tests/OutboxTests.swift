@@ -110,13 +110,32 @@ final class OutboxTests: XCTestCase {
         accepted.state = .sent
         accepted.jobID = "accepted-job"
         let job = Job(id: "accepted-job", capability_id: original.capability.id, status: "succeeded", result: nil, error: nil, created_at: Int64(original.created.timeIntervalSince1970))
-        let rows = ActivityEntry.merge(jobs: [job], outbox: [accepted], connection: connection)
+        let rows = ActivityEntry.merge(
+            jobs: [job],
+            outbox: [accepted],
+            connection: connection,
+            capabilities: []
+        )
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows.first?.status, "Completed")
         XCTAssertEqual(rows.first?.title, "Session")
         let replacement = Connection(url: connection.url, pin: "different-server", deviceID: connection.deviceID, privateKey: connection.privateKey)
-        XCTAssertTrue(ActivityEntry.merge(jobs: [], outbox: [original], connection: replacement).isEmpty)
-        let pending = try XCTUnwrap(ActivityEntry.merge(jobs: [], outbox: [original], connection: connection).first)
+        XCTAssertTrue(
+            ActivityEntry.merge(
+                jobs: [],
+                outbox: [original],
+                connection: replacement,
+                capabilities: []
+            ).isEmpty
+        )
+        let pending = try XCTUnwrap(
+            ActivityEntry.merge(
+                jobs: [],
+                outbox: [original],
+                connection: connection,
+                capabilities: []
+            ).first
+        )
         XCTAssertEqual(pending.id, "outbox:" + original.id)
         XCTAssertEqual(pending.outboxID, original.id)
         XCTAssertTrue(pending.canRetry)

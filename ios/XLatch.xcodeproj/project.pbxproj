@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		080E8C4BC7B6C0AF2FE887C4 /* xlatch Screen Context.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 7D2E7410BF2894F1681273D0 /* xlatch Screen Context.shortcut */; };
 		08E2A221A3B96BC3C20D200B /* OutboxStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C9609C7A843DD62FD424857 /* OutboxStore.swift */; };
+		0CB8DAC572AD675F37DE2114 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = E41DA90AB8F9058D25355583 /* PrivacyInfo.xcprivacy */; };
 		0D008CB5711C01FC649B632D /* OutboxItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = E493BDC12A16E688518DBE43 /* OutboxItem.swift */; };
 		0E9B5089BBFE0156D42A7A44 /* OutboxBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6378269A6E0476B71D4A7084 /* OutboxBackground.swift */; };
 		1501DDA3A303402858A10E32 /* OutboxDelivery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 954646361B0F5188FC31F7F2 /* OutboxDelivery.swift */; };
@@ -17,6 +18,7 @@
 		2C29AB9C1430A2F509B25747 /* ShortcutTargets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88625B71E3DE0DF918087F69 /* ShortcutTargets.swift */; };
 		30E9A392C39E0F421A9C63DC /* ServerIdentityUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */; };
 		38C503C7F48FBE6339E2E224 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8742A5AD18C6B86070591B6E /* Models.swift */; };
+		3DD18407834110478F10B9B9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1EC2DC892FE8D6D626B4468C /* PrivacyInfo.xcprivacy */; };
 		4152DA75E330F968A3DB9B65 /* ShareContentLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21D174F6D32A061C6496033C /* ShareContentLoader.swift */; };
 		41A1512677F533C37E53ADC5 /* xlatch Clipboard.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 824CF63C0CD8DD94858C01EA /* xlatch Clipboard.shortcut */; };
 		4256F1E48E1ABD94980E3741 /* xlatch Screenshot.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */; };
@@ -44,9 +46,7 @@
 		AF827541050C8C9A9ACF0C4E /* OutboxBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6378269A6E0476B71D4A7084 /* OutboxBackground.swift */; };
 		C302FEA68688AFCA0FE53D73 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */; };
 		C5A82AA26AD29686AF854D1B /* LiveServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE18BB602FBA1EE18F41189 /* LiveServerTests.swift */; };
-		C7A1999A78AC0854621F0DCE /* Send to xlatch.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = E75EC3B2B9134253BD6BD8DB /* Send to xlatch.shortcut */; };
 		C91E06AFE0270D17318928B7 /* XLatchIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BA50A33C6FC472761359F70 /* XLatchIntents.swift */; };
-		CA64A220983B114FE9BD639E /* Send file to xlatch.shortcut in Resources */ = {isa = PBXBuildFile; fileRef = 73FDB87E90060C5E7A8DABE0 /* Send file to xlatch.shortcut */; };
 		D0FCC84082E6BA86BF5B7B78 /* CapturedContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123CCF908036478345E434F3 /* CapturedContext.swift */; };
 		D863A4DDCD8DE65D7F3AB1C0 /* ShortcutSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7642A427F252CBE0EB0CCB5 /* ShortcutSettingsView.swift */; };
 		E413EEE061FE35349B63A97B /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A9E19665E7FEDE88483F33 /* Client.swift */; };
@@ -94,6 +94,7 @@
 		0FAB3DB88428F9B784667BA3 /* EnrollmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentTests.swift; sourceTree = "<group>"; };
 		123CCF908036478345E434F3 /* CapturedContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedContext.swift; sourceTree = "<group>"; };
 		1790F5C4920008A92F4DF6D2 /* TransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransportTests.swift; sourceTree = "<group>"; };
+		1EC2DC892FE8D6D626B4468C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerIdentityUpdate.swift; sourceTree = "<group>"; };
 		21A9E19665E7FEDE88483F33 /* Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Client.swift; sourceTree = "<group>"; };
 		21B0AD2A89B9C80F46B84002 /* OutboxLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxLifecycle.swift; sourceTree = "<group>"; };
@@ -108,7 +109,6 @@
 		5A3C70216C28FBB17D9583D1 /* XLatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XLatch.entitlements; sourceTree = "<group>"; };
 		6378269A6E0476B71D4A7084 /* OutboxBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxBackground.swift; sourceTree = "<group>"; };
 		6C44017E1838AD8B660CA6F6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		73FDB87E90060C5E7A8DABE0 /* Send file to xlatch.shortcut */ = {isa = PBXFileReference; path = "Send file to xlatch.shortcut"; sourceTree = "<group>"; };
 		7618D419102F88C16B0941D6 /* XLatchShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = XLatchShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7CB2F33E3B5E54F233E06AD5 /* ProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtocolTests.swift; sourceTree = "<group>"; };
 		7D2E7410BF2894F1681273D0 /* xlatch Screen Context.shortcut */ = {isa = PBXFileReference; path = "xlatch Screen Context.shortcut"; sourceTree = "<group>"; };
@@ -130,8 +130,8 @@
 		C0723883B78480ECA4505859 /* CapabilityApprovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapabilityApprovalTests.swift; sourceTree = "<group>"; };
 		D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		D92C9D70A7A4C26E97C3151B /* SafariContext.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SafariContext.js; sourceTree = "<group>"; };
+		E41DA90AB8F9058D25355583 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		E493BDC12A16E688518DBE43 /* OutboxItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxItem.swift; sourceTree = "<group>"; };
-		E75EC3B2B9134253BD6BD8DB /* Send to xlatch.shortcut */ = {isa = PBXFileReference; path = "Send to xlatch.shortcut"; sourceTree = "<group>"; };
 		E7642A427F252CBE0EB0CCB5 /* ShortcutSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutSettingsView.swift; sourceTree = "<group>"; };
 		F4C60EE037F5758DB6F33373 /* XLatchShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XLatchShare.entitlements; sourceTree = "<group>"; };
 		FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */ = {isa = PBXFileReference; path = "xlatch Screenshot.shortcut"; sourceTree = "<group>"; };
@@ -163,6 +163,7 @@
 				54CAFB5D36A2AA95E589C8C7 /* Info.plist */,
 				21B0AD2A89B9C80F46B84002 /* OutboxLifecycle.swift */,
 				3756907BF14BC079A654F30D /* OutboxView.swift */,
+				1EC2DC892FE8D6D626B4468C /* PrivacyInfo.xcprivacy */,
 				998A46FC0928DECBD3CBDB9D /* QRScanner.swift */,
 				52C6A57003E9930DC90F2CF2 /* ScreenshotCapture.swift */,
 				1FC6E1DAA3E9103AACB91E9D /* ServerIdentityUpdate.swift */,
@@ -197,6 +198,7 @@
 			isa = PBXGroup;
 			children = (
 				6C44017E1838AD8B660CA6F6 /* Info.plist */,
+				E41DA90AB8F9058D25355583 /* PrivacyInfo.xcprivacy */,
 				D92C9D70A7A4C26E97C3151B /* SafariContext.js */,
 				D4A13B2EA4C8AC94E2F8943B /* ShareViewController.swift */,
 				F4C60EE037F5758DB6F33373 /* XLatchShare.entitlements */,
@@ -228,8 +230,6 @@
 		FC875C3A7BE5887985833A6F /* Shortcuts */ = {
 			isa = PBXGroup;
 			children = (
-				73FDB87E90060C5E7A8DABE0 /* Send file to xlatch.shortcut */,
-				E75EC3B2B9134253BD6BD8DB /* Send to xlatch.shortcut */,
 				824CF63C0CD8DD94858C01EA /* xlatch Clipboard.shortcut */,
 				7D2E7410BF2894F1681273D0 /* xlatch Screen Context.shortcut */,
 				FA370E0A943F1ADA5A65CF0A /* xlatch Screenshot.shortcut */,
@@ -346,8 +346,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8C7AAD581FD2AC5454B83505 /* Assets.xcassets in Resources */,
-				CA64A220983B114FE9BD639E /* Send file to xlatch.shortcut in Resources */,
-				C7A1999A78AC0854621F0DCE /* Send to xlatch.shortcut in Resources */,
+				3DD18407834110478F10B9B9 /* PrivacyInfo.xcprivacy in Resources */,
 				41A1512677F533C37E53ADC5 /* xlatch Clipboard.shortcut in Resources */,
 				080E8C4BC7B6C0AF2FE887C4 /* xlatch Screen Context.shortcut in Resources */,
 				4256F1E48E1ABD94980E3741 /* xlatch Screenshot.shortcut in Resources */,
@@ -358,6 +357,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0CB8DAC572AD675F37DE2114 /* PrivacyInfo.xcprivacy in Resources */,
 				1F597AA22663A3084739BFB1 /* SafariContext.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -457,7 +457,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.byteowlz.xlatch.share;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -518,7 +518,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -529,7 +529,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -546,7 +546,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.byteowlz.xlatch;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -618,7 +618,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				OTHER_LDFLAGS = "$(inherited) -ObjC";
@@ -628,7 +628,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -646,7 +646,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.byteowlz.xlatch.share;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -663,7 +663,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.byteowlz.xlatch;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};

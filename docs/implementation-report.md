@@ -1,6 +1,6 @@
 # CrossLatch build report
 
-Implemented in `/Users/tommyfalkowski/byteowlz/xlatch`. Govnr was not dispatched or modified.
+Implemented in the `byteowlz/xlatch` repository. Govnr was not dispatched or modified.
 
 ## Available now
 
@@ -44,7 +44,7 @@ Epic: `xltch-gkte`. Protocol/server/security/jobs tasks `.1`–`.4` are closed w
 - `xltch-dphj`: streaming artifacts and retention.
 - `xltch-x587`: Windows control transport and release-matrix validation.
 
-Four issues filed in `/Users/tommyfalkowski/byteowlz/templates`:
+Four issues filed in the `byteowlz/templates` repository:
 
 - `tmpl-d9wd`: incomplete scaffold substitution (crate imports and identity).
 - `tmpl-h7h7`: unsafe unauthenticated config endpoint/permissive CORS defaults.
