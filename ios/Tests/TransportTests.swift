@@ -42,3 +42,19 @@ final class TransportTests: XCTestCase {
         }
     }
 }
+
+extension TransportTests {
+    func testTailnetTransportExceptionIsScopedAndIdenticalInShareExtension() throws {
+        let app = try XCTUnwrap(Bundle.main.infoDictionary?["NSAppTransportSecurity"] as? [String: Any])
+        XCTAssertNil(app["NSAllowsArbitraryLoads"])
+        XCTAssertEqual(app["NSAllowsLocalNetworking"] as? Bool, true)
+        let domains = try XCTUnwrap(app["NSExceptionDomains"] as? [String: [String: Any]])
+        XCTAssertEqual(Set(domains.keys), ["100.64.0.0/10"])
+        XCTAssertEqual(domains["100.64.0.0/10"]?["NSExceptionAllowsInsecureHTTPLoads"] as? Bool, true)
+        XCTAssertEqual(domains["100.64.0.0/10"]?["NSExceptionMinimumTLSVersion"] as? String, "TLSv1.2")
+        let path = Bundle.main.bundleURL.appendingPathComponent("PlugIns/XLatchShare.appex/Info.plist")
+        let share = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: path), format: nil) as? [String: Any])
+        let shareATS = try XCTUnwrap(share["NSAppTransportSecurity"] as? [String: Any])
+        XCTAssertEqual(app as NSDictionary, shareATS as NSDictionary)
+    }
+}
