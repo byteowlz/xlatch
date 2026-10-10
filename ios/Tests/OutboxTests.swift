@@ -330,3 +330,62 @@ extension OutboxTests {
         XCTAssertEqual(UploadProgress(sent: 42, total: 100).label, "Uploading — 42%")
     }
 }
+
+
+extension OutboxTests {
+    func testMultiServerSendStagesAllDestinationsAndKeepsOfflineItem() async throws {
+        let (_, store, first, original) = try fixture()
+        let second = Connection(url: "https://other.test", pin: "other-pin", deviceID: UUID().uuidString,
+            privateKey: Curve25519.Signing.PrivateKey().rawRepresentation)
+        let targets = [ShareTarget(capability: original.capability, connection: first), ShareTarget(capability: original.capability, connection: second)]
+        XCTAssertNotEqual(targets[0].id, targets[1].id)
+        let ids = [UUID().uuidString, UUID().uuidString]
+        let delivery = OutboxDelivery(store: { store }, connections: { [first, second] }, deliver: { item, connection in
+            XCTAssertEqual(Set(try store.items().map(\.id)), Set(ids), "Both destinations must be durable before delivery starts")
+            XCTAssertTrue(try item.matches(connection))
+            if connection.id == first.id { throw ClientError.delivery("Offline", retryable: true) }
+            return Job(id: "other-server-job", capability_id: item.capability.id, status: "queued", result: nil, error: nil, created_at: 0)
+        }, schedule: {})
+        let receipts = try await delivery.submitMultiple(.text("same content"), targets: targets, ids: ids)
+        XCTAssertEqual(receipts.map(\.state), [.waiting, .sent])
+        XCTAssertEqual(receipts.map(\.serverURL), [first.url, second.url])
+        XCTAssertEqual(try receipts[0].input().payload["text"] as? String, "same content")
+        XCTAssertEqual(receipts[1].jobID, "other-server-job")
+        // Repeating the same logical selection must reuse the durable records.
+        let retry = try await delivery.submitMultiple(.text("same content"), targets: targets, ids: ids)
+        XCTAssertEqual(retry.map(\.id), ids)
+        XCTAssertEqual(try store.items().count, 2)
+    }
+
+    func testMultiServerSendCopiesStagedFileForEachDestination() async throws {
+        let (_, store, first, original) = try fixture()
+        let second = Connection(url: "https://other.test", pin: "other-pin", deviceID: UUID().uuidString,
+            privateKey: Curve25519.Signing.PrivateKey().rawRepresentation)
+        let input = try ShareInput.file(Data(repeating: 42, count: 4 * 1024 * 1024 + 1), name: "recording.png", mime: "image/png")
+        let source = try XCTUnwrap(input.localFile)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let targets = [ShareTarget(capability: original.capability, connection: first), ShareTarget(capability: original.capability, connection: second)]
+        let delivery = OutboxDelivery(store: { store }, connections: { [first, second] }, deliver: { _, _ in
+            throw ClientError.delivery("Offline", retryable: true)
+        }, schedule: {})
+        let receipts = try await delivery.submitMultiple(input, targets: targets, ids: [UUID().uuidString, UUID().uuidString])
+        try FileManager.default.removeItem(at: source)
+        let paths = try receipts.map { try XCTUnwrap($0.input().localFile) }
+        defer { for path in paths { try? FileManager.default.removeItem(at: path) } }
+        XCTAssertNotEqual(paths[0], paths[1])
+        for path in paths { XCTAssertEqual(try Data(contentsOf: path), Data(repeating: 42, count: 4 * 1024 * 1024 + 1)) }
+    }
+
+    func testServerAliasesAreOptionalAndIsolatedByPairing() {
+        let first = Connection(url: "https://first.test", pin: UUID().uuidString, deviceID: "phone", privateKey: Data())
+        let second = Connection(url: "https://second.test", pin: UUID().uuidString, deviceID: "phone", privateKey: Data())
+        ServerPresentation.save(alias: "  Mac  ", show: false, for: first)
+        defer { ServerPresentation.save(alias: "", show: true, for: first) }
+        XCTAssertEqual(ServerPresentation.label(for: first), "Mac")
+        XCTAssertFalse(ServerPresentation.showsAlias(for: first))
+        XCTAssertEqual(ServerPresentation.label(for: second), "second.test")
+        XCTAssertTrue(ServerPresentation.showsAlias(for: second))
+        ServerPresentation.save(alias: "", show: true, for: first)
+        XCTAssertEqual(ServerPresentation.label(for: first), "first.test")
+    }
+}

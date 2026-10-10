@@ -24,6 +24,20 @@ actor OutboxDelivery {
         await drain(id: item.id)
         return try store.items().first(where: { $0.id == item.id }) ?? item
     }
+    func submitMultiple(_ input: ShareInput, targets: [ShareTarget], ids: [String]) async throws -> [OutboxItem] {
+        guard targets.count == ids.count, (2...16).contains(targets.count), Set(ids).count == ids.count else {
+            throw ClientError.message("Choose 2–16 distinct targets.")
+        }
+        let store = try makeStore()
+        // Stage every destination before network work; one offline server cannot lose another send.
+        for (target, id) in zip(targets, ids) {
+            _ = try store.enqueue(OutboxItem(id: id, input: input, capability: target.capability, connection: target.connection, now: Date()))
+        }
+        schedule()
+        for id in ids { await drain(id: id) }
+        let items = try store.items()
+        return ids.compactMap { id in items.first { $0.id == id } }
+    }
     func drain(id: String? = nil, expedite: Bool = false) async {
         guard !draining else { return }
         draining = true; lastError = nil

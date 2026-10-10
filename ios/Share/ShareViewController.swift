@@ -23,10 +23,14 @@ final class ShareViewController: UIViewController {
         let original = includePageText ? pageInput ?? input : input
         return original?.addingText(additionalText)
     }
-    @Published var capabilities: [Capability] = APIClient.cachedCapabilities()
+    @Published var capabilities: [Capability] = []
+    @Published var catalogs: [String: [Capability]] = [:]
+    @Published var serverErrors: [String: String] = [:]
+    @Published var chainConnection: Connection?
+    @Published var groupReceipts: [OutboxItem] = []
+    @Published var groupFailures: [String] = []
     @Published var connections: [Connection] = []
     @Published var connection: Connection?
-    @Published var disabledActionIDs: Set<String> = []
     @Published var deviceID: String?
     @Published var chain: [Capability] = []
     @Published var selectingGroup = false
@@ -68,56 +72,67 @@ final class ShareViewController: UIViewController {
                 input = try await ShareContentLoader.load(provider)
             }
             connections = try CredentialStore.loadAll()
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Open xlatch and pair your server first.") }
-            self.connection = connection
-            deviceID = connection.deviceID
-            disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
-            capabilities = try await APIClient(connection: connection).capabilities()
+            guard !connections.isEmpty else { throw ClientError.message("Open xlatch and pair a server first.") }
+            connection = try CredentialStore.load() ?? connections.first
+            deviceID = connection?.deviceID
+            catalogs = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, APIClient.cachedCapabilities(for: $0)) })
+            serverErrors = [:]
+            await withTaskGroup(of: (String, [Capability]?, String?).self) { group in
+                for server in connections {
+                    group.addTask {
+                        do { return (server.id, try await APIClient(connection: server).capabilities(), nil) }
+                        catch { return (server.id, nil, error.localizedDescription) }
+                    }
+                }
+                for await (id, actions, failure) in group {
+                    if let actions { catalogs[id] = actions }
+                    if let failure { serverErrors[id] = failure }
+                }
+            }
+            capabilities = connection.flatMap { catalogs[$0.id] } ?? []
         } catch { self.error = error.localizedDescription }
     }
-    func selectServer(_ id: String) async {
-        guard connection?.id != id, sending == nil else { return }
-        loading = true; error = nil; clearChain(); cancelGroupSelection()
-        defer { loading = false }
+    func refreshServer(_ server: Connection) async {
         do {
-            try CredentialStore.select(id)
-            connections = try CredentialStore.loadAll()
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("This server is no longer paired.") }
-            self.connection = connection
-            deviceID = connection.deviceID
-            disabledActionIDs = ShareActionPreferences.disabled(deviceID: connection.deviceID)
-            let cached = APIClient.cachedCapabilities(for: connection)
-            capabilities = cached.isEmpty ? try await APIClient(connection: connection).capabilities() : cached
-        } catch { self.error = error.localizedDescription }
+            catalogs[server.id] = try await APIClient(connection: server).capabilities()
+            serverErrors.removeValue(forKey: server.id)
+        } catch { serverErrors[server.id] = error.localizedDescription }
     }
     var stepReferences: [[String: String]] { chain.map { ["capability_id": $0.id, "revision": $0.revision] } }
-    var choices: [Capability] {
-        let source = chain.isEmpty ? capabilities.filter { capability in content.map { capability.accepts($0.mime) } ?? false } : nextSteps
-        let enabled = source.filter { !disabledActionIDs.contains($0.id) }
-        let ordered = deviceID.map { ShareActionPreferences.ordered(enabled, deviceID: $0) } ?? enabled
-        return selectingGroup ? ordered.filter(Self.isLeaf) : ordered
+    var choices: [ShareTarget] {
+        let servers = chainConnection.map { [$0] } ?? connections
+        return servers.flatMap { server in
+            let source = chain.isEmpty ? (catalogs[server.id] ?? []).filter { capability in content.map { capability.accepts($0.mime) } ?? false } : nextSteps
+            let disabled = ShareActionPreferences.disabled(deviceID: server.deviceID)
+            let ordered = ShareActionPreferences.ordered(source.filter { !disabled.contains($0.id) }, deviceID: server.deviceID)
+            return ordered.filter { !selectingGroup || Self.isLeaf($0) }.map { ShareTarget(capability: $0, connection: server) }
+        }
     }
-    var selectedGroup: [Capability] { choices.filter { selectedGroupIDs.contains($0.id) } }
+    var selectedGroup: [ShareTarget] { choices.filter { selectedGroupIDs.contains($0.id) } }
+    var canSaveGroup: Bool { Set(selectedGroup.map { $0.connection.id }).count == 1 }
     private static func isLeaf(_ capability: Capability) -> Bool {
         guard let kind = capability.manifest.execution?.kind else { return false }
         return !["compose", "fan_out"].contains(kind)
     }
-    func iconOverride(for capabilityID: String) -> ActionIconOverride? {
-        deviceID.flatMap { ShareActionPreferences.icon(for: capabilityID, deviceID: $0) }
+    func iconOverride(for capabilityID: String, server: Connection? = nil) -> ActionIconOverride? {
+        (server ?? chainConnection ?? connection).flatMap { ShareActionPreferences.icon(for: capabilityID, deviceID: $0.deviceID) }
     }
-    func addStep(_ capability: Capability) async {
+    func addStep(_ target: ShareTarget) async {
+        let capability = target.capability
         guard !selectingGroup, sending == nil, !findingSteps, chain.count < 16, capability.manifest.execution?.kind != nil,
-              Self.isLeaf(capability), choices.contains(capability) else { return }
+              Self.isLeaf(capability), choices.contains(where: { $0.id == target.id }) else { return }
+        chainConnection = target.connection
         chain.append(capability)
         await refreshSteps()
     }
     func undoStep() async {
         guard sending == nil else { return }
         if !chain.isEmpty { chain.removeLast() }
+        if chain.isEmpty { chainConnection = nil }
         await refreshSteps()
     }
     func clearChain() {
-        selectionVersion = UUID(); chain = []; nextSteps = []; findingSteps = false; error = nil; savedMessage = nil
+        selectionVersion = UUID(); chainConnection = nil; chain = []; nextSteps = []; findingSteps = false; error = nil; savedMessage = nil
     }
     func beginGroupSelection() {
         guard sending == nil, chain.isEmpty else { return }
@@ -126,10 +141,10 @@ final class ShareViewController: UIViewController {
     func cancelGroupSelection() {
         selectingGroup = false; selectedGroupIDs = []
     }
-    func toggleGroupTarget(_ capability: Capability) {
-        guard selectingGroup, sending == nil, Self.isLeaf(capability) else { return }
-        if selectedGroupIDs.contains(capability.id) { selectedGroupIDs.remove(capability.id) }
-        else if selectedGroupIDs.count < 16 { selectedGroupIDs.insert(capability.id) }
+    func toggleGroupTarget(_ target: ShareTarget) {
+        guard selectingGroup, sending == nil, Self.isLeaf(target.capability) else { return }
+        if selectedGroupIDs.contains(target.id) { selectedGroupIDs.remove(target.id) }
+        else if selectedGroupIDs.count < 16 { selectedGroupIDs.insert(target.id) }
     }
     func refreshSteps() async {
         let version = UUID(); selectionVersion = version
@@ -138,7 +153,7 @@ final class ShareViewController: UIViewController {
         findingSteps = true
         defer { if selectionVersion == version { findingSteps = false } }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server first.") }
+            guard let connection = chainConnection else { throw ClientError.message("Choose a first step.") }
             let candidates: [Capability] = try await APIClient(connection: connection).rpc(["op": "chain_candidates", "steps": stepReferences])
             if selectionVersion == version { nextSteps = candidates }
         } catch { if selectionVersion == version { self.error = "Could not check compatible steps. " + error.localizedDescription } }
@@ -147,18 +162,18 @@ final class ShareViewController: UIViewController {
         guard chain.count >= 2, sending == nil else { return }
         sending = "save-chain"; defer { sending = nil }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server first.") }
+            guard let connection = chainConnection else { throw ClientError.message("Choose a first step.") }
             let _: Capability = try await APIClient(connection: connection).rpc(["op": "save_chain", "steps": stepReferences, "title": title])
             savedMessage = "Saved for approval. Open xlatch to approve the new target and grant access."
         } catch { self.error = error.localizedDescription }
     }
     func saveGroup(title: String) async {
         let targets = selectedGroup
-        guard targets.count >= 2, sending == nil else { return }
+        guard targets.count >= 2, canSaveGroup, sending == nil else { return }
         sending = "save-group"; defer { sending = nil }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server first.") }
-            let references = targets.map { ["capability_id": $0.id, "revision": $0.revision] }
+            let connection = targets[0].connection
+            let references = targets.map { ["capability_id": $0.capability.id, "revision": $0.capability.revision] }
             let _: Capability = try await APIClient(connection: connection).rpc(["op": "save_group", "targets": references, "title": title])
             savedMessage = "Saved for approval. Open xlatch to approve the new target and grant access."
             cancelGroupSelection()
@@ -169,22 +184,31 @@ final class ShareViewController: UIViewController {
         guard targets.count >= 2, sending == nil, let input = content else { return }
         sending = "send-group"; error = nil; defer { sending = nil; uploadingID = nil }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
-            let keyID = targets.map { $0.id + "@" + $0.revision }.joined(separator: "+") + (includePageText ? ":page" : ":original")
-            let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
-            uploadingID = key
-            receipt = try await OutboxDelivery.shared.submit(input, capability: targets[0], connection: connection, id: key, group: targets)
-            try await observeReceipt(keyID: keyID, connection: connection)
+            let ids = targets.map { target -> String in
+                let keyID = target.id + "@" + target.capability.revision + (includePageText ? ":page" : ":original")
+                let key = requestKeys[keyID] ?? UUID().uuidString
+                requestKeys[keyID] = key
+                return key
+            }
+            groupReceipts = try await OutboxDelivery.shared.submitMultiple(input, targets: targets, ids: ids)
+            groupFailures = []
+            for (item, target) in zip(groupReceipts, targets) {
+                receipt = item
+                do { try await observeReceipt(keyID: target.id + "@" + target.capability.revision + (includePageText ? ":page" : ":original"), connection: target.connection) }
+                catch { groupFailures.append(ServerPresentation.label(for: target.connection) + " · " + target.capability.manifest.title + ": " + error.localizedDescription) }
+            }
+            receipt = groupReceipts.first
             sent = true
         } catch { self.error = error.localizedDescription }
     }
-    func send(_ capability: Capability) async {
-        guard sending == nil, !findingSteps, chain.count < 16, choices.contains(capability), let input = content else { return }
-        sending = capability.id; error = nil; defer { sending = nil; uploadingID = nil }
+    func send(_ target: ShareTarget) async {
+        let capability = target.capability
+        guard sending == nil, !findingSteps, chain.count < 16, choices.contains(where: { $0.id == target.id }), let input = content else { return }
+        sending = target.id; error = nil; defer { sending = nil; uploadingID = nil }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
+            let connection = target.connection
             let steps = chain.isEmpty ? [capability] : chain + [capability]
-            let keyID = steps.map { $0.id + "@" + $0.revision }.joined(separator: ">") + (includePageText ? ":page" : ":original")
+            let keyID = connection.id + ":" + steps.map { $0.id + "@" + $0.revision }.joined(separator: ">") + (includePageText ? ":page" : ":original")
             let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
             uploadingID = key
             receipt = try await OutboxDelivery.shared.submit(input, capability: steps[0], connection: connection, id: key, chain: chain.isEmpty ? nil : steps)
@@ -218,7 +242,7 @@ final class ShareViewController: UIViewController {
         sending = "park"; error = nil; parkProgress = original.localFile == nil ? nil : UploadProgress(sent: 0, total: 0)
         defer { sending = nil; parkProgress = nil }
         do {
-            guard let connection = try CredentialStore.load() else { throw ClientError.message("Pair your server in xlatch first.") }
+            guard let connection else { throw ClientError.message("Choose a server for Save for later.") }
             let client = try APIClient(connection: connection)
             let input = try await client.upload(original, id: parkID) { [weak self] sent, total in
                 Task { @MainActor in self?.parkProgress = UploadProgress(sent: sent, total: total) }
@@ -271,7 +295,7 @@ struct ShareView: View {
                         Button(model.selectingGroup ? "Cancel" : "Select multiple") {
                             if model.selectingGroup { model.cancelGroupSelection() }
                             else { model.beginGroupSelection() }
-                        }.disabled(model.sending != nil || model.loading)
+                        }.disabled(model.sending != nil)
                     }
                 }
             }
@@ -293,30 +317,29 @@ struct ShareView: View {
     private var confirmation: some View {
         VStack(spacing: 20) {
             Image(systemName: "checkmark.circle").font(.system(size: 48)).foregroundStyle(.tint)
-            Text(model.parked ? "Saved for later" : (model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone")).font(.title2.bold())
+            Text(!model.groupReceipts.isEmpty ? (model.groupFailures.isEmpty ? "Shared to \(model.groupReceipts.count) targets" : "Some targets need attention") : (model.parked ? "Saved for later" : (model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone"))).font(.title2.bold())
             Text(model.parked ? "Open Later in xlatch whenever you are ready to choose a target." : (model.receipt?.confirmation ?? "Open xlatch’s Outbox to check delivery."))
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
+            ForEach(model.groupReceipts) { item in
+                VStack(alignment: .leading) {
+                    Text(item.capability.manifest.title).font(.headline)
+                    if let server = model.connections.first(where: { $0.deviceID == item.deviceID && $0.pin == item.serverPin }) {
+                        Text(ServerPresentation.label(for: server)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(item.confirmation).font(.footnote).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            ForEach(model.groupFailures, id: \.self) { failure in Text(failure).font(.footnote).foregroundStyle(.red) }
             Button("Done") { model.done() }.buttonStyle(.borderedProminent)
         }.padding(28).task {
-            guard model.parked || model.receipt?.state == .sent else { return }
+            guard model.groupFailures.isEmpty else { return }
+            guard model.groupReceipts.isEmpty ? (model.parked || model.receipt?.state == .sent) : model.groupReceipts.allSatisfy({ $0.state == .sent }) else { return }
             do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
             model.done()
         }
     }
     private var actionList: some View {
         List {
-            if model.connections.count > 1 {
-                Section("Server") {
-                    Picker("Send with", selection: Binding(
-                        get: { model.connection?.id ?? "" },
-                        set: { id in Task { await model.selectServer(id) } }
-                    )) {
-                        ForEach(model.connections, id: \.id) { connection in
-                            Text(connection.displayName).tag(connection.id)
-                        }
-                    }
-                }
-            }
             if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
             if model.content != nil {
                 Section("Add text") {
@@ -328,6 +351,18 @@ struct ShareView: View {
                         .disabled(model.sending != nil)
                 }
                 Section {
+                    if model.connections.count > 1 {
+                        Picker("Save for later on", selection: Binding(
+                            get: { model.connection?.id ?? "" },
+                            set: { id in
+                                model.connection = model.connections.first { $0.id == id }
+                                model.deviceID = model.connection?.deviceID
+                                model.capabilities = model.catalogs[id] ?? []
+                            }
+                        )) {
+                            ForEach(model.connections, id: \.id) { server in Text(ServerPresentation.label(for: server)).tag(server.id) }
+                        }
+                    }
                     Button { Task { await model.park() } } label: {
                         Label(model.sending == "park" ? "Saving…" : "Save for later", systemImage: "bookmark")
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -355,6 +390,15 @@ struct ShareView: View {
             if let progress = model.parkProgress { Section { UploadProgressBar(progress: progress) } }
             else if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
             if model.content != nil { targets }
+            ForEach(model.connections.filter { model.serverErrors[$0.id] != nil }, id: \.id) { server in
+                Section {
+                    DisclosureGroup(ServerPresentation.label(for: server) + " · unavailable") {
+                        Text(model.serverErrors[server.id] ?? "").font(.footnote).foregroundStyle(.red)
+                        Text("Cached targets remain available. Failed sends stay in Outbox for review or retry.").font(.footnote).foregroundStyle(.secondary)
+                        Button("Retry connection") { Task { await model.refreshServer(server) } }
+                    }
+                }
+            }
         }
     }
     private var groupSection: some View {
@@ -362,7 +406,7 @@ struct ShareView: View {
             if model.selectedGroup.isEmpty {
                 Text("Choose at least two targets below.").foregroundStyle(.secondary)
             } else {
-                Text(model.selectedGroup.map { $0.manifest.title }.joined(separator: " + "))
+                Text(model.selectedGroup.map { $0.capability.manifest.title }.joined(separator: " + "))
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             Button {
@@ -373,10 +417,11 @@ struct ShareView: View {
             }
             .disabled(model.selectedGroup.count < 2 || model.sending != nil)
             Button("Save selection as target…", systemImage: "square.and.arrow.down") {
-                groupName = model.selectedGroup.map { $0.manifest.title }.joined(separator: " + ")
+                groupName = model.selectedGroup.map { $0.capability.manifest.title }.joined(separator: " + ")
                 namingGroup = true
             }
-            .disabled(model.selectedGroup.count < 2 || model.sending != nil)
+            .disabled(model.selectedGroup.count < 2 || !model.canSaveGroup || model.sending != nil)
+            if !model.canSaveGroup && model.selectedGroup.count >= 2 { Text("Sending across servers is supported. Saved server groups must use targets on one server.").font(.footnote).foregroundStyle(.secondary) }
         } header: { Text("Multiple targets") }
         footer: { Text("Each target receives the original item. Use a chain when one action should consume another action’s result.") }
     }
@@ -405,8 +450,8 @@ struct ShareView: View {
                 description: Text(model.chain.isEmpty ? "Enable or grant an action that accepts this content." : "No granted targets accept this output. Undo the last step or clear the chain."))
         }
         Section {
-            ForEach(model.choices) { capability in
-                ShareTargetRow(model: model, capability: capability)
+            ForEach(model.choices) { target in
+                ShareTargetRow(model: model, target: target)
             }
         } header: { Text(model.selectingGroup ? "Select targets" : (model.chain.isEmpty ? "Choose an action" : "Send to next target")) }
         footer: {
@@ -418,7 +463,8 @@ struct ShareView: View {
 
 private struct ShareTargetRow: View {
     @ObservedObject var model: ShareModel
-    let capability: Capability
+    let target: ShareTarget
+    private var capability: Capability { target.capability }
     private var canExtend: Bool {
         guard let kind = capability.manifest.execution?.kind else { return false }
         return !["compose", "fan_out"].contains(kind) && model.chain.count < 15
@@ -426,36 +472,39 @@ private struct ShareTargetRow: View {
     var body: some View {
         HStack {
             Button {
-                if model.selectingGroup { model.toggleGroupTarget(capability) }
-                else { Task { await model.send(capability) } }
+                if model.selectingGroup { model.toggleGroupTarget(target) }
+                else { Task { await model.send(target) } }
             } label: {
                 HStack {
-                    CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
-                    Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id, server: target.connection))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
+                        if model.connections.count > 1 && ServerPresentation.showsAlias(for: target.connection) {
+                            Text(ServerPresentation.label(for: target.connection)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
                     if model.selectingGroup {
-                        Image(systemName: model.selectedGroupIDs.contains(capability.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3).foregroundStyle(model.selectedGroupIDs.contains(capability.id) ? Color.accentColor : Color.secondary)
-                    } else if model.sending == capability.id { ProgressView() }
+                        Image(systemName: model.selectedGroupIDs.contains(target.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.title3).foregroundStyle(model.selectedGroupIDs.contains(target.id) ? Color.accentColor : Color.secondary)
+                    } else if model.sending == target.id { ProgressView() }
                     else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
             if canExtend && !model.selectingGroup {
                 Menu {
-                    Button("Add step", systemImage: "link") { Task { await model.addStep(capability) } }
+                    Button("Add step", systemImage: "link") { Task { await model.addStep(target) } }
                 } label: { Image(systemName: "ellipsis.circle").frame(minWidth: 44, minHeight: 44) }
                 .accessibilityLabel("Options for " + capability.manifest.title)
             }
         }.padding(.vertical, 6)
-        .disabled(model.sending != nil || model.loading || model.findingSteps)
+        .disabled(model.sending != nil || model.findingSteps)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if canExtend && !model.selectingGroup {
-                Button { Task { await model.addStep(capability) } } label: {
+                Button { Task { await model.addStep(target) } } label: {
                     Label("Add step", systemImage: "link")
                 }.tint(.teal)
             }
         }
-        .accessibilityAction(named: "Add step") { if canExtend && !model.selectingGroup { Task { await model.addStep(capability) } } }
+        .accessibilityAction(named: "Add step") { if canExtend && !model.selectingGroup { Task { await model.addStep(target) } } }
     }
 }

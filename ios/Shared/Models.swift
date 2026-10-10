@@ -164,6 +164,28 @@ struct Connection: Codable {
     }
 }
 
+struct ShareTarget: Identifiable {
+    let capability: Capability
+    let connection: Connection
+    var id: String { connection.id + ":" + capability.id }
+}
+
+enum ServerPresentation {
+    private static var defaults: UserDefaults? { UserDefaults(suiteName: "group.com.byteowlz.xlatch") }
+    static func alias(for connection: Connection) -> String {
+        defaults?.string(forKey: "server-alias." + connection.id) ?? ""
+    }
+    static func label(for connection: Connection) -> String { alias(for: connection).isEmpty ? connection.displayName : alias(for: connection) }
+    static func showsAlias(for connection: Connection) -> Bool {
+        defaults?.object(forKey: "server-show-alias." + connection.id) as? Bool ?? true
+    }
+    static func save(alias: String, show: Bool, for connection: Connection) {
+        let value = String(alias.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        defaults?.set(value, forKey: "server-alias." + connection.id)
+        defaults?.set(show, forKey: "server-show-alias." + connection.id)
+    }
+}
+
 enum ClientError: LocalizedError {
     case message(String)
     case delivery(String, retryable: Bool)

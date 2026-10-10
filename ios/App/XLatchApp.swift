@@ -780,17 +780,20 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Active server", selection: Binding(
+                    Picker("Viewing server", selection: Binding(
                         get: { model.connection?.id ?? "" },
                         set: { id in Task { await model.selectServer(id) } }
                     )) {
                         ForEach(model.connections, id: \.id) { server in
-                            Text(server.displayName).tag(server.id)
+                            Text(ServerPresentation.label(for: server)).tag(server.id)
                         }
+                    }
+                    ForEach(model.connections, id: \.id) { server in
+                        NavigationLink(ServerPresentation.label(for: server)) { ServerAliasView(connection: server) }
                     }
                     NavigationLink { PairView() } label: { Label("Add server", systemImage: "plus.circle") }
                 } header: { Text("Servers") } footer: {
-                    Text("The active server supplies this screen and is the default in the share sheet. Existing Outbox items remain bound to the server that accepted their pairing key.")
+                    Text("Choose a server to manage here. The share sheet shows targets from all paired servers. Outbox items stay bound to their destination server.")
                 }
                 Section {
                     LabeledContent("Address selection", value: "Automatic")
@@ -929,5 +932,24 @@ private struct ActionAppearanceView: View {
             model.setIcon(.custom(try ActionIcon.imported(data)), for: capability.id)
             error = nil
         } catch { self.error = error.localizedDescription }
+    }
+}
+
+struct ServerAliasView: View {
+    let connection: Connection
+    @State private var alias = ""
+    @State private var showAlias = true
+    var body: some View {
+        Form {
+            Section {
+                TextField(connection.displayName, text: $alias)
+                    .textInputAutocapitalization(.never)
+                Toggle("Show alias below share targets", isOn: $showAlias)
+            } header: { Text("Server alias") } footer: { Text("Aliases are saved on this iPhone. Leave the name empty to use the server address.") }
+        }
+        .navigationTitle("Server label")
+        .onAppear { alias = ServerPresentation.alias(for: connection); showAlias = ServerPresentation.showsAlias(for: connection) }
+        .onChange(of: alias) { _, value in ServerPresentation.save(alias: value, show: showAlias, for: connection) }
+        .onChange(of: showAlias) { _, value in ServerPresentation.save(alias: alias, show: value, for: connection) }
     }
 }
