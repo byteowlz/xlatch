@@ -3,6 +3,26 @@ import UniformTypeIdentifiers
 @testable import XLatch
 
 final class ShareContentTests: XCTestCase {
+    func testAdditionalTextPreservesURLAndDoesNotAccumulate() {
+        let input = ShareInput.text("https://example.com", mime: "text/uri-list")
+        XCTAssertEqual(input.addingText("Summarize this").payload["text"] as? String, "https://example.com\n\nSummarize this")
+        XCTAssertEqual(input.addingText("Different note").payload["text"] as? String, "https://example.com\n\nDifferent note")
+        XCTAssertEqual(input.addingText(" \n").payload["text"] as? String, "https://example.com")
+        XCTAssertEqual(input.addingText("note").mime, input.mime)
+    }
+
+    func testAdditionalTextPreservesFileAndStagedPath() throws {
+        let input = ShareInput(mime: "application/pdf", label: "document.pdf",
+            payload: ["mime_type": "application/pdf", "file": ["name": "document.pdf", "size": 100]],
+            localFile: URL(fileURLWithPath: "/tmp/staged-file"))
+        let updated = input.addingText("Please review")
+        XCTAssertEqual(updated.payload["text"] as? String, "Please review")
+        XCTAssertEqual(updated.payload["file"] as? [String: AnyHashable], input.payload["file"] as? [String: AnyHashable])
+        XCTAssertEqual(updated.localFile, input.localFile)
+        XCTAssertEqual(updated.label, input.label)
+        XCTAssertEqual(updated.mime, input.mime)
+    }
+
     func testFilesAppURLIsSentAsBytes() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".toml")
         let bytes = Data("name = \"file share\"\n".utf8)

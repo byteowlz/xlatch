@@ -18,7 +18,11 @@ final class ShareViewController: UIViewController {
     @Published var input: ShareInput?
     @Published var pageInput: ShareInput?
     @Published var includePageText = false
-    var content: ShareInput? { includePageText ? pageInput ?? input : input }
+    @Published var additionalText = ""
+    var content: ShareInput? {
+        let original = includePageText ? pageInput ?? input : input
+        return original?.addingText(additionalText)
+    }
     @Published var capabilities: [Capability] = APIClient.cachedCapabilities()
     @Published var connections: [Connection] = []
     @Published var connection: Connection?
@@ -315,6 +319,14 @@ struct ShareView: View {
             }
             if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
             if model.content != nil {
+                Section("Add text") {
+                    TextField("Optional note or instructions", text: $model.additionalText, axis: .vertical)
+                        .lineLimit(1...4)
+                        .multilineTextAlignment(.leading)
+                        .foregroundStyle(.primary)
+                        .accessibilityLabel("Additional text")
+                        .disabled(model.sending != nil)
+                }
                 Section {
                     Button { Task { await model.park() } } label: {
                         Label(model.sending == "park" ? "Saving…" : "Save for later", systemImage: "bookmark")

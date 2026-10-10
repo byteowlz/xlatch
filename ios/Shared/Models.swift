@@ -180,6 +180,13 @@ struct ShareInput {
     static func text(_ text: String, mime: String = "text/plain") -> ShareInput {
         ShareInput(mime: mime, label: text, payload: ["text": text, "mime_type": mime])
     }
+    func addingText(_ note: String) -> ShareInput {
+        guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return self }
+        var updated = payload
+        let original = updated["text"] as? String ?? ""
+        updated["text"] = original.isEmpty ? note : original + "\n\n" + note
+        return ShareInput(mime: mime, label: label, payload: updated, localFile: localFile)
+    }
     static func file(at url: URL, mime: String) throws -> ShareInput {
         let handle = try FileHandle(forReadingFrom: url)
         defer { handle.closeFile() }
