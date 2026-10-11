@@ -242,6 +242,18 @@ struct ShareInput {
 enum ShareActionPreferences {
     private static let suite = "group.com.byteowlz.xlatch"
 
+    static func orderedTargets(_ targets: [ShareTarget]) -> [ShareTarget] {
+        let ids = UserDefaults(suiteName: suite)?.stringArray(forKey: "share-target-order") ?? []
+        let ranks = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($0.element, $0.offset) })
+        return targets.enumerated().sorted {
+            let a = ranks[$0.element.id] ?? Int.max, b = ranks[$1.element.id] ?? Int.max
+            return a == b ? $0.offset < $1.offset : a < b
+        }.map(\.element)
+    }
+    static func saveTargetOrder(_ ids: [String]) {
+        var seen = Set<String>()
+        UserDefaults(suiteName: suite)?.set(ids.filter { seen.insert($0).inserted }, forKey: "share-target-order")
+    }
     static func disabled(deviceID: String) -> Set<String> {
         Set(UserDefaults(suiteName: suite)?.stringArray(forKey: "disabled-actions.\(deviceID)") ?? [])
     }

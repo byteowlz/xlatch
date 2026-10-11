@@ -101,12 +101,12 @@ final class ShareViewController: UIViewController {
     var stepReferences: [[String: String]] { chain.map { ["capability_id": $0.id, "revision": $0.revision] } }
     var choices: [ShareTarget] {
         let servers = chainConnection.map { [$0] } ?? connections
-        return servers.flatMap { server in
+        return ShareActionPreferences.orderedTargets(servers.flatMap { server in
             let source = chain.isEmpty ? (catalogs[server.id] ?? []).filter { capability in content.map { capability.accepts($0.mime) } ?? false } : nextSteps
             let disabled = ShareActionPreferences.disabled(deviceID: server.deviceID)
             let ordered = ShareActionPreferences.ordered(source.filter { !disabled.contains($0.id) }, deviceID: server.deviceID)
             return ordered.filter { !selectingGroup || Self.isLeaf($0) }.map { ShareTarget(capability: $0, connection: server) }
-        }
+        })
     }
     var selectedGroup: [ShareTarget] { choices.filter { selectedGroupIDs.contains($0.id) } }
     var canSaveGroup: Bool { Set(selectedGroup.map { $0.connection.id }).count == 1 }

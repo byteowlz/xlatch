@@ -11,6 +11,8 @@ import OSLog
     @Published var connection: Connection?
     @Published var connections: [Connection] = []
     @Published var capabilities: [Capability] = []
+    @Published var catalogs: [String: [Capability]] = [:]
+    @Published var catalogErrors: [String: String] = [:]
     @Published var jobs: [Job] = []
     @Published var parkedItems: [ParkedItem] = []
     @Published var error: String?
@@ -18,25 +20,45 @@ import OSLog
     @Published var lastUpdated: Date?
     @Published var activeServerURL: String?
     @Published var disabledActionIDs: Set<String> = []
-    @Published private(set) var actionOrder: [String] = []
     @Published private(set) var actionIcons: [String: ActionIconOverride] = [:]
+    var allTargets: [ShareTarget] {
+        ShareActionPreferences.orderedTargets(connections.flatMap { server in
+            ShareActionPreferences.ordered(catalogs[server.id] ?? APIClient.cachedCapabilities(for: server), deviceID: server.deviceID)
+                .map { ShareTarget(capability: $0, connection: server) }
+        })
+    }
+    func moveTargets(from source: IndexSet, to destination: Int) {
+        var ids = allTargets.map(\.id)
+        ids.move(fromOffsets: source, toOffset: destination)
+        ShareActionPreferences.saveTargetOrder(ids)
+        objectWillChange.send()
+    }
+    func setTarget(_ target: ShareTarget, enabled: Bool) {
+        var disabled = ShareActionPreferences.disabled(deviceID: target.connection.deviceID)
+        if enabled { disabled.remove(target.capability.id) } else { disabled.insert(target.capability.id) }
+        ShareActionPreferences.save(disabled, deviceID: target.connection.deviceID)
+        if target.connection.deviceID == connection?.deviceID { disabledActionIDs = disabled }
+        objectWillChange.send()
+    }
+    func refreshCatalogs() async {
+        await withTaskGroup(of: (String, [Capability]?, String?).self) { group in
+            for server in connections {
+                group.addTask {
+                    do { return (server.id, try await APIClient(connection: server).capabilities(), nil) }
+                    catch { return (server.id, nil, error.localizedDescription) }
+                }
+            }
+            for await (id, actions, failure) in group {
+                if let actions { catalogs[id] = actions }
+                catalogErrors[id] = failure
+            }
+        }
+    }
     var orderedCapabilities: [Capability] {
         guard let connection else { return capabilities }
         return ShareActionPreferences.ordered(capabilities, deviceID: connection.deviceID)
     }
     var enabledCapabilities: [Capability] { orderedCapabilities.filter { !disabledActionIDs.contains($0.id) } }
-    func setAction(_ id: String, enabled: Bool) {
-        guard let connection else { return }
-        if enabled { disabledActionIDs.remove(id) } else { disabledActionIDs.insert(id) }
-        ShareActionPreferences.save(disabledActionIDs, deviceID: connection.deviceID)
-    }
-    func moveActions(from source: IndexSet, to destination: Int) {
-        guard let connection else { return }
-        var ids = orderedCapabilities.map(\.id)
-        ids.move(fromOffsets: source, toOffset: destination)
-        actionOrder = ids
-        ShareActionPreferences.saveOrder(ids, deviceID: connection.deviceID)
-    }
     func iconOverride(for capabilityID: String) -> ActionIconOverride? {
         actionIcons[capabilityID]
     }
@@ -46,8 +68,7 @@ import OSLog
         ShareActionPreferences.saveIcon(icon, for: capabilityID, deviceID: connection.deviceID)
     }
     private func loadActionPresentation() {
-        guard let connection else { actionOrder = []; actionIcons = [:]; return }
-        actionOrder = ShareActionPreferences.ordered(capabilities, deviceID: connection.deviceID).map(\.id)
+        guard let connection else { actionIcons = [:]; return }
         actionIcons = Dictionary(uniqueKeysWithValues: capabilities.compactMap { capability in
             ShareActionPreferences.icon(for: capability.id, deviceID: connection.deviceID).map { (capability.id, $0) }
         })
@@ -72,7 +93,7 @@ import OSLog
     }
     func refresh() async {
         guard let expectedConnection = connection, !refreshing else { return }
-        let expectedID = expectedConnection.id
+        let expectedID = expectedConnection.deviceID
         refreshing = true; defer { refreshing = false }
         do {
             let client = try APIClient(connection: expectedConnection)
@@ -80,7 +101,7 @@ import OSLog
             let refreshedCapabilities = try await client.capabilities()
             let refreshedParked: [ParkedItem] = try await client.rpc(["op": "parked"])
             let recent: [Job] = try await client.rpc(["op": "jobs"])
-            guard connection?.id == expectedID else { return }
+            guard connection?.deviceID == expectedID else { return }
             capabilities = refreshedCapabilities
             loadActionPresentation()
             parkedItems = refreshedParked
@@ -93,6 +114,7 @@ import OSLog
                 try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: job.id, content: content, trigger: nil))
             }
             connections = try CredentialStore.loadAll(); connection = try CredentialStore.load()
+            if let connection { catalogs[connection.id] = refreshedCapabilities }
             jobs = recent; activeServerURL = client.lastSuccessfulURL; error = nil; lastUpdated = Date()
         } catch { self.error = error.localizedDescription }
     }
@@ -177,6 +199,12 @@ import OSLog
             }
             .task {
                 while !Task.isCancelled {
+                    if scenePhase == .active { await model.refreshCatalogs() }
+                    do { try await Task.sleep(for: .seconds(30)) } catch { break }
+                }
+            }
+            .task {
+                while !Task.isCancelled {
                     if scenePhase == .active {
                         await model.refresh()
                         await OutboxDelivery.shared.drain()
@@ -244,27 +272,47 @@ struct ActionsView: View {
         NavigationStack {
             List {
                 Section {
-                    NavigationLink { CapabilityApprovalListView() } label: {
-                        Label("Review actions & access", systemImage: "checkmark.shield")
+                    ForEach(model.connections, id: \.id) { server in
+                        NavigationLink { ServerActionApprovalView(serverID: server.id) } label: {
+                            Label("Review actions · \(ServerPresentation.label(for: server))", systemImage: "checkmark.shield")
+                        }
                     }
-                } footer: { Text("Approve new server actions and choose which devices can use them.") }
+                } footer: { Text("Approve new actions on their server and choose which devices can use them.") }
                 if let error = model.error { Section { Label(error, systemImage: "wifi.exclamationmark").foregroundStyle(.secondary) } }
-                if model.enabledCapabilities.isEmpty {
+                if model.allTargets.filter({ !ShareActionPreferences.disabled(deviceID: $0.connection.deviceID).contains($0.capability.id) }).isEmpty {
                     ContentUnavailableView("No actions yet", systemImage: "bolt.slash", description: Text("Review new actions below, or enable an existing action in Settings."))
                 } else {
                     Section {
-                        ForEach(model.enabledCapabilities) { capability in
-                            NavigationLink { ComposeView(capability: capability) } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack { CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id)); Text(capability.manifest.title).font(.headline) }
-                                    Text(capability.manifest.description).font(.subheadline).foregroundStyle(.secondary)
-                                    Text(capability.contentLabel).font(.caption).foregroundStyle(.secondary)
+                        ForEach(model.allTargets.filter { !ShareActionPreferences.disabled(deviceID: $0.connection.deviceID).contains($0.capability.id) }) { target in
+                            NavigationLink { ComposeView(capability: target.capability, server: target.connection) } label: {
+                                HStack(spacing: 12) {
+                                    CapabilityIcon(icon: target.capability.manifest.icon, override: ShareActionPreferences.icon(for: target.capability.id, deviceID: target.connection.deviceID))
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(target.capability.manifest.title).font(.headline)
+                                        Text(ServerPresentation.label(for: target.connection)).font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }.padding(.vertical, 6)
                             }
                         }
                     } footer: { Text("Also available in the share menu of other apps. Choose xlatch, then an action.") }
                 }
-            }.navigationTitle("Actions").refreshable { await model.refresh() }
+            }.navigationTitle("Actions").refreshable { await model.refreshCatalogs() }
+        }
+    }
+}
+
+private struct ServerActionApprovalView: View {
+    @EnvironmentObject var model: AppModel
+    let serverID: String
+    @State private var ready = false
+    var body: some View {
+        Group {
+            if ready { CapabilityApprovalListView() }
+            else { ProgressView("Loading server…") }
+        }.task {
+            let deviceID = model.connections.first(where: { $0.id == serverID })?.deviceID
+            await model.selectServer(serverID)
+            ready = deviceID != nil && model.connection?.deviceID == deviceID
         }
     }
 }
@@ -272,6 +320,7 @@ struct ActionsView: View {
 struct ComposeView: View {
     @EnvironmentObject var model: AppModel
     let capability: Capability
+    var server: Connection? = nil
     @State private var text = ""
     @State private var file: ShareInput?
     @State private var picking = false
@@ -321,7 +370,7 @@ struct ComposeView: View {
             do {
                 let input = file ?? ShareInput.text(text, mime: capability.accepts("text/plain") ? "text/plain" : "text/uri-list")
                 guard capability.accepts(input.mime) else { throw ClientError.message("Choose a file of a supported type for this action.") }
-                guard let connection = model.connection else { throw ClientError.message("Pair your server first.") }
+                guard let connection = server ?? model.connection else { throw ClientError.message("Pair your server first.") }
                 submitted = try await OutboxDelivery.shared.submit(input, capability: capability, connection: connection, id: requestKey)
                 await model.refresh()
             } catch { self.error = error.localizedDescription }
@@ -768,6 +817,70 @@ private struct ResendJobView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
+    @State private var filter: String?
+    private var targets: [ShareTarget] { model.allTargets.filter { filter == nil || $0.connection.id == filter } }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Servers") {
+                    ForEach(model.connections, id: \.id) { server in
+                        NavigationLink { ServerSettingsView(server: server) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(ServerPresentation.label(for: server))
+                                Text(server.displayName).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    NavigationLink { PairView() } label: { Label("Add server", systemImage: "plus.circle") }
+                }
+                Section {
+                    Picker("Show actions", selection: $filter) {
+                        Text("All servers").tag(String?.none)
+                        ForEach(model.connections, id: \.id) { server in
+                            Text(ServerPresentation.label(for: server)).tag(Optional(server.id))
+                        }
+                    }
+                }
+                Section {
+                    ForEach(targets) { target in
+                        HStack(spacing: 12) {
+                            NavigationLink { ActionAppearanceView(capability: target.capability, server: target.connection) } label: {
+                                HStack(spacing: 12) {
+                                    CapabilityIcon(icon: target.capability.manifest.icon, override: ShareActionPreferences.icon(for: target.capability.id, deviceID: target.connection.deviceID))
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(target.capability.manifest.title)
+                                        Text(ServerPresentation.label(for: target.connection)).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            Toggle("Enable \(target.capability.manifest.title)", isOn: Binding(
+                                get: { !ShareActionPreferences.disabled(deviceID: target.connection.deviceID).contains(target.capability.id) },
+                                set: { model.setTarget(target, enabled: $0) }
+                            )).labelsHidden()
+                        }
+                    }.onMove { source, destination in
+                        if filter == nil { model.moveTargets(from: source, to: destination) }
+                    }.moveDisabled(filter != nil)
+                    if targets.isEmpty { Text("No actions available. Check your servers and grants.").foregroundStyle(.secondary) }
+                } header: { Text("Share sheet order & icons") } footer: {
+                    Text("Use Edit to reorder targets across all servers. Tap an action to change its icon. Server filters are optional; choose All servers to change the share sheet order.")
+                }
+                ForEach(model.connections.filter { model.catalogErrors[$0.id] != nil }, id: \.id) { server in
+                    Section(ServerPresentation.label(for: server)) {
+                        Text(model.catalogErrors[server.id] ?? "").foregroundStyle(.red)
+                    }
+                }
+                Section { NavigationLink("Shortcuts & Back Tap") { ShortcutSettingsView() } }
+            }.navigationTitle("Settings").toolbar { EditButton() }
+                .refreshable { await model.refreshCatalogs() }
+                .task { await model.refreshCatalogs() }
+        }
+    }
+}
+
+struct ServerSettingsView: View {
+    let server: Connection
+    @EnvironmentObject var model: AppModel
     @State private var notificationStatus: String?
     @State private var confirmDisconnect = false
     private var addresses: [String] {
@@ -780,22 +893,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Viewing server", selection: Binding(
-                        get: { model.connection?.id ?? "" },
-                        set: { id in Task { await model.selectServer(id) } }
-                    )) {
-                        ForEach(model.connections, id: \.id) { server in
-                            Text(ServerPresentation.label(for: server)).tag(server.id)
-                        }
-                    }
-                    ForEach(model.connections, id: \.id) { server in
-                        NavigationLink(ServerPresentation.label(for: server)) { ServerAliasView(connection: server) }
-                    }
-                    NavigationLink { PairView() } label: { Label("Add server", systemImage: "plus.circle") }
-                } header: { Text("Servers") } footer: {
-                    Text("Choose a server to manage here. The share sheet shows targets from all paired servers. Outbox items stay bound to their destination server.")
-                }
-                Section {
+                    if let connection = model.connection { NavigationLink("Server alias") { ServerAliasView(connection: connection) } }
                     LabeledContent("Address selection", value: "Automatic")
                     LabeledContent("Server verification", value: model.connection?.keyPin == nil ? "Paired certificate" : "Paired server key")
                     if let address = model.activeServerURL {
@@ -825,26 +923,6 @@ struct SettingsView: View {
                     }
                 } header: { Text("Available server addresses") } footer: {
                     Text(addresses.count > 1 ? "All addresses were saved during pairing. The LAN address may be faster at home; another saved address can work when you’re away." : "Only one address was saved. Pair again with a server advertising both LAN and tailnet addresses to enable switching between them.")
-                }
-                Section {
-                    ForEach(model.orderedCapabilities) { capability in
-                        HStack(spacing: 12) {
-                            NavigationLink { ActionAppearanceView(capability: capability) } label: {
-                                HStack(spacing: 12) {
-                                    CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id))
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(capability.manifest.title)
-                                        Text(capability.manifest.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                    }
-                                }
-                            }
-                            Toggle("Enable \(capability.manifest.title)", isOn: Binding(get: { !model.disabledActionIDs.contains(capability.id) }, set: { model.setAction(capability.id, enabled: $0) }))
-                                .labelsHidden()
-                        }
-                    }.onMove(perform: model.moveActions)
-                    if model.capabilities.isEmpty { Text("No actions granted to this phone yet.").foregroundStyle(.secondary) }
-                } header: { Text("Actions on this phone") } footer: {
-                    Text("Tap an action to change its icon. Use Edit to reorder actions in the app, share sheet, chains and Shortcuts. Turning one off does not revoke its server permission or affect other devices.")
                 }
                 if let connection = model.connection {
                     Section {
@@ -879,7 +957,9 @@ struct SettingsView: View {
                     NavigationLink("Action approvals & access") { CapabilityApprovalListView() }
                     NavigationLink("Update server identity") { ServerIdentityUpdateView() }
                 }
-            }.navigationTitle("Settings").toolbar { EditButton() }
+            }.navigationTitle(model.connection.map { ServerPresentation.label(for: $0) } ?? "Server")
+                .disabled(model.connection?.deviceID != server.deviceID)
+                .task { await model.selectServer(server.id) }
                 .confirmationDialog("Forget this server?", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Forget server", role: .destructive) { model.disconnect() } }
         }
     }
@@ -888,10 +968,20 @@ struct SettingsView: View {
 private struct ActionAppearanceView: View {
     @EnvironmentObject private var model: AppModel
     let capability: Capability
+    var server: Connection? = nil
     @State private var choosingImage = false
     @State private var error: String?
     private let symbols = ["bolt.fill", "paperplane.fill", "tray.and.arrow.down.fill", "link", "text.bubble.fill", "waveform", "photo.fill", "film.fill", "doc.fill", "wand.and.stars", "terminal.fill", "gearshape.fill"]
-    private var selected: ActionIconOverride? { model.iconOverride(for: capability.id) }
+    private var selected: ActionIconOverride? {
+        guard let connection = server ?? model.connection else { return nil }
+        return ShareActionPreferences.icon(for: capability.id, deviceID: connection.deviceID)
+    }
+    private func setIcon(_ icon: ActionIconOverride?) {
+        guard let connection = server ?? model.connection else { return }
+        ShareActionPreferences.saveIcon(icon, for: capability.id, deviceID: connection.deviceID)
+        if connection.deviceID == model.connection?.deviceID { model.setIcon(icon, for: capability.id) }
+        model.objectWillChange.send()
+    }
     var body: some View {
         Form {
             Section {
@@ -906,7 +996,7 @@ private struct ActionAppearanceView: View {
             Section("Symbols") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
                     ForEach(symbols, id: \.self) { symbol in
-                        Button { model.setIcon(.system(symbol), for: capability.id) } label: {
+                        Button { setIcon(.system(symbol)) } label: {
                             Image(systemName: symbol).font(.title2).frame(width: 44, height: 44)
                                 .background(selected?.systemName == symbol ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                         }.buttonStyle(.plain).accessibilityLabel("Use \(symbol) icon")
@@ -915,7 +1005,7 @@ private struct ActionAppearanceView: View {
             }
             Section {
                 Button { choosingImage = true } label: { Label("Choose image…", systemImage: "photo") }
-                if selected != nil { Button("Use server icon") { model.setIcon(nil, for: capability.id) } }
+                if selected != nil { Button("Use server icon") { setIcon(nil) } }
                 if let error { Text(error).foregroundStyle(.red) }
             } footer: { Text("This choice is stored only on this iPhone. The action’s server-provided icon remains unchanged.") }
         }.navigationTitle("Action icon").navigationBarTitleDisplayMode(.inline)
@@ -929,7 +1019,7 @@ private struct ActionAppearanceView: View {
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            model.setIcon(.custom(try ActionIcon.imported(data)), for: capability.id)
+            setIcon(.custom(try ActionIcon.imported(data)))
             error = nil
         } catch { self.error = error.localizedDescription }
     }

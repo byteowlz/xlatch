@@ -42,13 +42,13 @@ struct XLatchTargetQuery: EntityStringQuery {
     static func targets() async throws -> [XLatchTarget] {
         let connections = try CredentialStore.loadAll()
         guard !connections.isEmpty else { throw ClientError.message("Open xlatch and pair a server first.") }
-        var targets: [XLatchTarget] = []
+        var targets: [ShareTarget] = []
         for connection in connections {
             let cached = APIClient.cachedCapabilities(for: connection)
             let actions = cached.isEmpty ? try await APIClient(connection: connection).capabilities() : cached
-            targets.append(contentsOf: available(actions, connection: connection).map { XLatchTarget(connection: connection, capability: $0) })
+            targets.append(contentsOf: available(actions, connection: connection).map { ShareTarget(capability: $0, connection: connection) })
         }
-        return targets
+        return ShareActionPreferences.orderedTargets(targets).map { XLatchTarget(connection: $0.connection, capability: $0.capability) }
     }
     static func resolve(_ id: String, connection: Connection, capabilities: [Capability], mime: String) throws -> Capability {
         guard let capability = available(capabilities, connection: connection).first(where: {

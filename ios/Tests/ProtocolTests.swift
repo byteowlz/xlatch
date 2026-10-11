@@ -44,3 +44,53 @@ extension ProtocolTests {
         XCTAssertTrue(access.contains("Local Network permission"))
     }
 }
+
+
+extension ProtocolTests {
+    func testRepeatedPairingCoalescesAuthenticatedServerWithoutLosingApprover() throws {
+        let approver = Connection(url: "https://10.0.0.10:7898", pin: "certificate", deviceID: "original", privateKey: Data([1]), serverID: "server", approvalKeyID: "approval", keyPin: "tls-key")
+        let duplicate = Connection(url: "https://100.64.0.10:7898", pin: "certificate", deviceID: "duplicate", privateKey: Data([2]), keyPin: "tls-key")
+        let result = CredentialStore.normalized([approver, duplicate])
+        XCTAssertEqual(result.count, 1)
+        let retained = try XCTUnwrap(result.first)
+        XCTAssertEqual(retained.deviceID, approver.deviceID)
+        XCTAssertEqual(retained.privateKey, approver.privateKey)
+        XCTAssertEqual(retained.approvalKeyID, approver.approvalKeyID)
+        XCTAssertEqual(Set([retained.url] + (retained.urls ?? [])), Set([approver.url, duplicate.url]))
+        XCTAssertEqual(CredentialStore.normalized(result).count, 1)
+    }
+    func testAddressAloneNeverMergesServers() {
+        let first = Connection(url: "https://10.0.0.10:7898", pin: "a", deviceID: "one", privateKey: Data(), keyPin: "key-a")
+        let other = Connection(url: first.url, pin: "b", deviceID: "two", privateKey: Data(), keyPin: "key-b")
+        XCTAssertEqual(CredentialStore.normalized([first, other]).count, 2)
+    }
+}
+
+
+extension ProtocolTests {
+    func testLearningServerIDUpdatesSameDeviceInsteadOfDuplicatingIt() throws {
+        let old = Connection(url: "https://10.0.0.10:7898", pin: "certificate", deviceID: "phone", privateKey: Data([1]), keyPin: "key")
+        var learned = old; learned.serverID = "server"
+        let result = CredentialStore.normalized([old, learned])
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.id, "server")
+        XCTAssertEqual(result.first?.privateKey, old.privateKey)
+    }
+    func testConflictingBrokerIdentitiesAreNeverCoalesced() {
+        let first = Connection(url: "https://one:7898", pin: "certificate", deviceID: "one", privateKey: Data(), serverID: "one", keyPin: "key")
+        var second = first; second.serverID = "two"
+        XCTAssertEqual(CredentialStore.normalized([first, second]).count, 2)
+    }
+    func testGlobalOrderingInterleavesServersAndSeparatesIdenticalActionIDs() {
+        let first = Connection(url: "https://one:7898", pin: "one", deviceID: "one", privateKey: Data(), serverID: "one")
+        let second = Connection(url: "https://two:7898", pin: "two", deviceID: "two", privateKey: Data(), serverID: "two")
+        let action = Capability(manifest: Manifest(id: "pi", title: "Pi", description: "", accepts: ["*/*"]), revision: "rev", status: "active")
+        let a = ShareTarget(capability: action, connection: first), b = ShareTarget(capability: action, connection: second)
+        let defaults = UserDefaults(suiteName: "group.com.byteowlz.xlatch")
+        let previous = defaults?.stringArray(forKey: "share-target-order") ?? []
+        defer { ShareActionPreferences.saveTargetOrder(previous) }
+        ShareActionPreferences.saveTargetOrder([b.id, a.id, b.id])
+        XCTAssertEqual(ShareActionPreferences.orderedTargets([a, b]).map(\.id), [b.id, a.id])
+        XCTAssertEqual(ShareActionPreferences.orderedTargets([a]).map(\.id), [a.id])
+    }
+}

@@ -61,9 +61,34 @@ final class PinnedSession: NSObject, URLSessionDelegate, URLSessionTaskDelegate,
 }
 
 enum CredentialStore {
+    private static let lock = NSRecursiveLock()
     private struct StoredConnections: Codable {
         var connections: [Connection]
         var activeID: String?
+    }
+    static func sameServer(_ left: Connection, _ right: Connection) -> Bool {
+        if let a = left.serverID, let b = right.serverID, a != b { return false }
+        if let a = left.keyPin, let b = right.keyPin { return a == b }
+        return left.pin == right.pin
+    }
+    static func normalized(_ connections: [Connection]) -> [Connection] {
+        var result: [Connection] = []
+        for connection in connections {
+            guard let index = result.firstIndex(where: { sameServer($0, connection) }) else {
+                result.append(connection); continue
+            }
+            let saved = result[index]
+            // Keep an established device rather than replacing its grants, jobs or approval key.
+            var retained = saved
+            if saved.deviceID == connection.deviceID || (saved.serverID == nil && connection.serverID != nil) {
+                retained = connection
+            }
+            retained.keyPin = retained.keyPin ?? saved.keyPin ?? connection.keyPin
+            retained.serverID = retained.serverID ?? saved.serverID ?? connection.serverID
+            retained.urls = Array(Set([saved.url, connection.url] + (saved.urls ?? []) + (connection.urls ?? []))).sorted()
+            result[index] = retained
+        }
+        return result
     }
     static var query: [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.byteowlz.xlatch.connection", kSecAttrAccount as String: "paired-device"]
@@ -71,12 +96,24 @@ enum CredentialStore {
         return query
     }
     private static func stored() throws -> StoredConnections {
+        lock.lock(); defer { lock.unlock() }
         var query = query; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return StoredConnections(connections: [], activeID: nil) }
         guard status == errSecSuccess, let data = result as? Data else { throw ClientError.delivery("Unlock your phone to access its pairing key. (\(status))", retryable: status == errSecInteractionNotAllowed) }
-        if let collection = try? JSONDecoder().decode(StoredConnections.self, from: data) { return collection }
+        if var collection = try? JSONDecoder().decode(StoredConnections.self, from: data) {
+            let original = collection.connections
+            collection.connections = normalized(original)
+            if collection.connections.count != original.count {
+                if let active = original.first(where: { $0.id == collection.activeID }) {
+                    collection.activeID = collection.connections.first(where: { sameServer($0, active) })?.id
+                }
+                migratePresentation(from: original, to: collection.connections)
+                try write(collection)
+            }
+            return collection
+        }
         let legacy = try JSONDecoder().decode(Connection.self, from: data)
         return StoredConnections(connections: [legacy], activeID: legacy.id)
     }
@@ -86,23 +123,55 @@ enum CredentialStore {
     }
     static func loadAll() throws -> [Connection] { try stored().connections }
     static func save(_ connection: Connection, makeActive: Bool = true) throws {
+        lock.lock(); defer { lock.unlock() }
         var updated = connection
         var value = try stored()
-        if let saved = value.connections.first(where: { $0.id == connection.id }) {
+        let original = value.connections
+        if let saved = original.first(where: { $0.deviceID == connection.deviceID && sameServer($0, connection) }), saved.pin == connection.pin {
             updated.keyPin = updated.keyPin ?? saved.keyPin
         }
-        value.connections.removeAll { $0.id == updated.id }
-        value.connections.append(updated)
-        if makeActive || value.activeID == nil { value.activeID = updated.id }
+        // Explicit identity migration replaces this exact device, including its old TLS pin.
+        var candidates = original
+        if let index = candidates.firstIndex(where: { $0.id == updated.id && $0.deviceID == updated.deviceID }) {
+            candidates[index] = updated
+        } else { candidates.append(updated) }
+        value.connections = normalized(candidates)
+        let retained = value.connections.first(where: { sameServer($0, updated) }) ?? updated
+        if makeActive || value.activeID == nil || original.first(where: { $0.id == value.activeID }).map({ sameServer($0, retained) }) == true {
+            value.activeID = retained.id
+        }
+        migratePresentation(from: original, to: value.connections)
         try write(value)
     }
+    private static func migratePresentation(from old: [Connection], to connections: [Connection]) {
+        guard let defaults = UserDefaults(suiteName: "group.com.byteowlz.xlatch") else { return }
+        for previous in old {
+            guard let retained = connections.first(where: { sameServer($0, previous) }), retained.id != previous.id else { continue }
+            for prefix in ["server-alias.", "server-show-alias."] {
+                if defaults.object(forKey: prefix + retained.id) == nil, let value = defaults.object(forKey: prefix + previous.id) {
+                    defaults.set(value, forKey: prefix + retained.id)
+                }
+            }
+            if let order = defaults.stringArray(forKey: "share-target-order") {
+                var seen = Set<String>()
+                defaults.set(order.map { id in
+                    id.hasPrefix(previous.id + ":") ? retained.id + id.dropFirst(previous.id.count) : id
+                }.filter { seen.insert($0).inserted }, forKey: "share-target-order")
+            }
+            if retained.deviceID == previous.deviceID, let cache = defaults.data(forKey: "capabilities." + previous.id) {
+                defaults.set(cache, forKey: "capabilities." + retained.id)
+            }
+        }
+    }
     static func select(_ id: String) throws {
+        lock.lock(); defer { lock.unlock() }
         var value = try stored()
         guard value.connections.contains(where: { $0.id == id }) else { throw ClientError.message("Server is no longer paired.") }
         value.activeID = id
         try write(value)
     }
     static func clear() throws {
+        lock.lock(); defer { lock.unlock() }
         var value = try stored()
         guard let active = value.activeID ?? value.connections.first?.id else { return }
         value.connections.removeAll { $0.id == active }
@@ -148,6 +217,13 @@ final class APIClient {
         let signature = try key.signature(for: Data(message.utf8)).base64EncodedString()
         let route = try await ServerDiscovery.reachableOrigin(ticket.candidateURLs, pin: ticket.pin)
         let reachable = route.url
+        let identity = Connection(url: reachable, pin: ticket.pin, deviceID: "", privateKey: Data(), keyPin: route.keyPin)
+        if var existing = try CredentialStore.loadAll().first(where: { CredentialStore.sameServer($0, identity) }) {
+            // A fresh QR is not a reason to create another device or discard its approval key.
+            existing.urls = Array(Set([reachable] + ticket.candidateURLs + route.addresses + (existing.urls ?? []))).sorted()
+            try CredentialStore.save(existing)
+            return existing
+        }
         let connection = Connection(url: reachable, pin: ticket.pin, deviceID: "", privateKey: key.rawRepresentation)
         let client = try APIClient(connection: connection)
         struct Enrolled: Decodable { let id: String }
