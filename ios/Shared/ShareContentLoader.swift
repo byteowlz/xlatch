@@ -2,6 +2,39 @@ import Foundation
 import UniformTypeIdentifiers
 
 enum ShareContentLoader {
+    static func loadAll(_ providers: [NSItemProvider]) async throws -> [ShareInput] {
+        let files = providers.filter { provider in
+            provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                || provider.registeredTypeIdentifiers.contains { id in
+                    guard let type = UTType(id) else { return false }
+                    return type.conforms(to: .data) && !type.conforms(to: .url) && !type.conforms(to: .text)
+                }
+        }
+        let selected = files.isEmpty ? providers : files
+        guard !selected.isEmpty, selected.count <= 100 else { throw ClientError.message("Share between 1 and 100 items at a time.") }
+        var inputs: [ShareInput] = []
+        do {
+            // Load sequentially and spill small files to disk too: a photo batch must not accumulate base64 in memory.
+            for provider in selected { inputs.append(try stage(try await load(provider))) }
+            return inputs
+        } catch {
+            for input in inputs { if let file = input.localFile { try? FileManager.default.removeItem(at: file) } }
+            throw ClientError.message("Could not read item \(inputs.count + 1) of \(selected.count). " + error.localizedDescription)
+        }
+    }
+    private static func stage(_ input: ShareInput) throws -> ShareInput {
+        guard input.localFile == nil, var metadata = input.payload["file"] as? [String: Any],
+              let encoded = metadata.removeValue(forKey: "data_base64") as? String,
+              let bytes = Data(base64Encoded: encoded) else { return input }
+        let file = try SharedFiles.directory().appendingPathComponent(UUID().uuidString)
+        do {
+            try bytes.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try SharedFiles.protect(file)
+        } catch { try? FileManager.default.removeItem(at: file); throw error }
+        metadata["size"] = bytes.count
+        var payload = input.payload; payload["file"] = metadata
+        return ShareInput(mime: input.mime, label: input.label, payload: payload, localFile: file)
+    }
     static func provider(in providers: [NSItemProvider]) -> NSItemProvider? {
         providers.first { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
             ?? providers.first { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) || $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) }

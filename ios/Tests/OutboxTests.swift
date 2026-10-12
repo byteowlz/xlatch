@@ -389,3 +389,46 @@ extension OutboxTests {
         XCTAssertEqual(ServerPresentation.label(for: first), "first.test")
     }
 }
+
+
+extension OutboxTests {
+    func testPhotoBatchStagesEveryItemBeforeDeliveryAndRetainsOfflineShares() async throws {
+        let (_, store, connection, original) = try fixture()
+        let target = ShareTarget(capability: original.capability, connection: connection)
+        let ids = (0..<3).map { _ in UUID().uuidString }
+        let inputs = [ShareInput.text("one"), .text("two"), .text("three")]
+        let delivery = OutboxDelivery(store: { store }, connections: { [connection] }, deliver: { item, _ in
+            XCTAssertEqual(Set(try store.items().map(\.id)), Set(ids))
+            if item.id == ids[1] { throw ClientError.delivery("Offline", retryable: true) }
+            return Job(id: item.id, capability_id: item.capability.id, status: "queued", result: nil, error: nil, created_at: 0)
+        }, schedule: {})
+        let receipts = try await delivery.submitBatch(inputs, targets: [target], ids: ids)
+        XCTAssertEqual(receipts.map(\.state), [.sent, .waiting, .sent])
+        XCTAssertEqual(receipts.map(\.label), ["one", "two", "three"])
+        XCTAssertEqual(try receipts[1].input().payload["text"] as? String, "two")
+    }
+    func testBatchRejectsIncompatibleItemBeforeEnqueueingAny() async throws {
+        let (_, store, connection, original) = try fixture()
+        let target = ShareTarget(capability: original.capability, connection: connection)
+        let delivery = OutboxDelivery(store: { store }, connections: { [connection] }, schedule: {})
+        do {
+            _ = try await delivery.submitBatch([.text("one"), .text("not accepted", mime: "audio/wav")], targets: [target], ids: [UUID().uuidString, UUID().uuidString])
+            XCTFail("Incompatible items must not be silently dropped")
+        } catch { XCTAssertTrue(try store.items().isEmpty) }
+    }
+}
+
+
+extension OutboxTests {
+    func testFullOutboxRejectsWholeBatchWithoutSendingOrKeepingHalf() async throws {
+        let (_, store, connection, original) = try fixture(maxItems: 2)
+        let delivery = OutboxDelivery(store: { store }, connections: { [connection] }, deliver: { _, _ in
+            XCTFail("No network work before the whole batch fits")
+            throw URLError(.badURL)
+        }, schedule: {})
+        do {
+            _ = try await delivery.submitBatch([.text("one"), .text("two"), .text("three")], targets: [ShareTarget(capability: original.capability, connection: connection)], ids: (0..<3).map { _ in UUID().uuidString })
+            XCTFail("Full Outbox must reject this batch")
+        } catch { XCTAssertTrue(try store.items().isEmpty) }
+    }
+}

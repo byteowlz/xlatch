@@ -98,3 +98,44 @@ final class ShareContentTests: XCTestCase {
         XCTAssertNil(input.payload["file"])
     }
 }
+
+
+extension ShareContentTests {
+    func testMultiplePhotosPreserveEveryAttachmentAndItsBytes() async throws {
+        let urls = (0..<3).map { _ in FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg") }
+        defer { for url in urls { try? FileManager.default.removeItem(at: url) } }
+        for (index, url) in urls.enumerated() { try Data([UInt8(index)]).write(to: url) }
+        let providers = urls.map { NSItemProvider(item: $0 as NSURL, typeIdentifier: UTType.fileURL.identifier) }
+        let inputs = try await ShareContentLoader.loadAll(providers)
+        defer { for input in inputs { if let url = input.localFile { try? FileManager.default.removeItem(at: url) } } }
+        XCTAssertEqual(inputs.map(\.label), urls.map(\.lastPathComponent))
+        let bytes = try inputs.map { input -> Data in
+            if let file = input.localFile { return try Data(contentsOf: file) }
+            let file = try XCTUnwrap(input.payload["file"] as? [String: String])
+            return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(file["data_base64"])))
+        }
+        XCTAssertEqual(bytes, [Data([0]), Data([1]), Data([2])])
+    }
+}
+
+
+extension ShareContentTests {
+    func testUnreadableSecondAttachmentDoesNotReturnOnlyTheFirst() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        try Data([1]).write(to: url); defer { try? FileManager.default.removeItem(at: url) }
+        let providers = [url, url.appendingPathExtension("missing")].map { NSItemProvider(item: $0 as NSURL, typeIdentifier: UTType.fileURL.identifier) }
+        do { _ = try await ShareContentLoader.loadAll(providers); XCTFail("Must report the unreadable item") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("item 2 of 2")) }
+    }
+    func testStagedSmallPhotoCanStillReachInlineAdapters() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        try Data([1, 2, 3]).write(to: url); defer { try? FileManager.default.removeItem(at: url) }
+        let inputs = try await ShareContentLoader.loadAll([NSItemProvider(item: url as NSURL, typeIdentifier: UTType.fileURL.identifier)])
+        let input = try XCTUnwrap(inputs.first)
+        defer { if let file = input.localFile { try? FileManager.default.removeItem(at: file) } }
+        XCTAssertNotNil(input.localFile)
+        let inline = try input.inlineFile()
+        XCTAssertNil(inline.localFile)
+        XCTAssertEqual((inline.payload["file"] as? [String: String])?["data_base64"], Data([1, 2, 3]).base64EncodedString())
+    }
+}

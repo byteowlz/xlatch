@@ -7,7 +7,7 @@ final class OutboxStore {
     let url: URL
     private let maxItems: Int
     private let maxBytes: Int
-    init(directory: URL? = nil, maxItems: Int = 50, maxBytes: Int = 64 * 1024 * 1024) throws {
+    init(directory: URL? = nil, maxItems: Int = 256, maxBytes: Int = 64 * 1024 * 1024) throws {
         guard let directory = directory ?? FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.byteowlz.xlatch")?.appendingPathComponent("Outbox", isDirectory: true) else { throw ClientError.message("The shared Outbox is unavailable.") }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         var protectedDirectory = directory
@@ -127,33 +127,47 @@ final class OutboxStore {
         try transaction { db in try maintain(db, now: now); return try records(db) }
     }
     func enqueue(_ item: OutboxItem) throws -> OutboxItem {
+        try transaction { db in try enqueue(item, db) }
+    }
+    func enqueueBatch(_ items: [OutboxItem]) throws {
         try transaction { db in
-            try maintain(db, now: item.created)
+            try maintain(db, now: Date())
             let existing = try records(db)
-            if let same = existing.first(where: { $0.id == item.id }) {
-                guard same.deviceID == item.deviceID, same.serverPin == item.serverPin, same.deviceKey == item.deviceKey,
-                      same.capability == item.capability, same.chain == item.chain, same.group == item.group, same.payloadHash == item.payloadHash else { throw ClientError.message("This retry ID belongs to different content. Open Outbox to inspect the earlier attempt.") }
-                return same
-            }
             let pending = existing.filter { $0.payload != nil }
-            let bytes = try pending.reduce(0) { try $0 + JSONEncoder().encode($1).count }
-            guard pending.count < maxItems, try bytes + JSONEncoder().encode(item).count <= maxBytes else { throw ClientError.message("Outbox is full (50 items / 64 MB). Remove saved items before sharing more.") }
-            for old in existing.filter({ [.sent, .cancelled, .expired].contains($0.state) }).dropLast(99) {
-                try remove(old.id, db)
+            let incoming = items.filter { item in !existing.contains(where: { $0.id == item.id }) }
+            let bytes = try (pending + incoming).reduce(0) { try $0 + JSONEncoder().encode($1).count }
+            guard pending.count + incoming.count <= maxItems, bytes <= maxBytes else {
+                throw ClientError.message("Outbox cannot fit all these shares. Free space in Outbox or select fewer items/targets.")
             }
-            var owned = item
-            if let sourceName = item.localFile {
-                let source = try SharedFiles.resolve(sourceName)
-                let target = try SharedFiles.resolve(item.id)
-                if source != target {
-                    if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
-                    try FileManager.default.copyItem(at: source, to: target)
-                    try SharedFiles.protect(target)
-                }
-                owned.localFile = item.id
-            }
-            try save(owned, db); return owned
+            for item in items { _ = try enqueue(item, db) }
         }
+    }
+    private func enqueue(_ item: OutboxItem, _ db: OpaquePointer) throws -> OutboxItem {
+        try maintain(db, now: item.created)
+        let existing = try records(db)
+        if let same = existing.first(where: { $0.id == item.id }) {
+            guard same.deviceID == item.deviceID, same.serverPin == item.serverPin, same.deviceKey == item.deviceKey,
+                  same.capability == item.capability, same.chain == item.chain, same.group == item.group, same.payloadHash == item.payloadHash else { throw ClientError.message("This retry ID belongs to different content. Open Outbox to inspect the earlier attempt.") }
+            return same
+        }
+        let pending = existing.filter { $0.payload != nil }
+        let bytes = try pending.reduce(0) { try $0 + JSONEncoder().encode($1).count }
+        guard pending.count < maxItems, try bytes + JSONEncoder().encode(item).count <= maxBytes else { throw ClientError.message("Outbox is full (\(maxItems) items / \(maxBytes / (1024 * 1024)) MB of records). Remove saved items before sharing more.") }
+        for old in existing.filter({ [.sent, .cancelled, .expired].contains($0.state) }).dropLast(99) {
+            try remove(old.id, db)
+        }
+        var owned = item
+        if let sourceName = item.localFile {
+            let source = try SharedFiles.resolve(sourceName)
+            let target = try SharedFiles.resolve(item.id)
+            if source != target {
+                if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+                try FileManager.default.copyItem(at: source, to: target)
+                try SharedFiles.protect(target)
+            }
+            owned.localFile = item.id
+        }
+        try save(owned, db); return owned
     }
     func claim(id: String? = nil, now: Date = Date()) throws -> OutboxItem? {
         try transaction { db in

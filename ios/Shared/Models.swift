@@ -209,6 +209,18 @@ struct ShareInput {
         updated["text"] = original.isEmpty ? note : original + "\n\n" + note
         return ShareInput(mime: mime, label: label, payload: updated, localFile: localFile)
     }
+    func inlineFile() throws -> ShareInput {
+        guard let localFile else { return self }
+        let handle = try FileHandle(forReadingFrom: localFile); defer { try? handle.close() }
+        let bytes = try handle.read(upToCount: 4 * 1024 * 1024 + 1) ?? Data()
+        guard bytes.count <= 4 * 1024 * 1024,
+              var metadata = payload["file"] as? [String: Any] else {
+            throw ClientError.message("This action uses the old inline-file adapter. Update it for large-file paths, or choose Save to server. Your file remains in Outbox.")
+        }
+        metadata.removeValue(forKey: "size"); metadata["data_base64"] = bytes.base64EncodedString()
+        var value = payload; value["file"] = metadata
+        return ShareInput(mime: mime, label: label, payload: value)
+    }
     static func file(at url: URL, mime: String) throws -> ShareInput {
         let handle = try FileHandle(forReadingFrom: url)
         defer { handle.closeFile() }

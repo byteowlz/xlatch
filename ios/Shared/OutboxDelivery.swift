@@ -28,15 +28,31 @@ actor OutboxDelivery {
         guard targets.count == ids.count, (2...16).contains(targets.count), Set(ids).count == ids.count else {
             throw ClientError.message("Choose 2–16 distinct targets.")
         }
-        let store = try makeStore()
-        // Stage every destination before network work; one offline server cannot lose another send.
-        for (target, id) in zip(targets, ids) {
-            _ = try store.enqueue(OutboxItem(id: id, input: input, capability: target.capability, connection: target.connection, now: Date()))
+        return try await submitBatch([input], targets: targets, ids: ids)
+    }
+    func submitBatch(_ inputs: [ShareInput], targets: [ShareTarget], ids: [String], chain: [Capability]? = nil,
+                     progress: ((Int, String) -> Void)? = nil) async throws -> [OutboxItem] {
+        guard (1...100).contains(inputs.count), (1...16).contains(targets.count),
+              ids.count == inputs.count * targets.count, Set(ids).count == ids.count,
+              Set(targets.map(\.id)).count == targets.count, chain == nil || targets.count == 1 else {
+            throw ClientError.message("Choose 1–100 items and 1–16 distinct targets.")
         }
+        let store = try makeStore()
+        let items = try inputs.enumerated().flatMap { index, input in
+            try targets.enumerated().map { offset, target in
+                try OutboxItem(id: ids[index * targets.count + offset], input: input, capability: target.capability,
+                              connection: target.connection, now: Date(), chain: chain)
+            }
+        }
+        // Persist every item/destination before the first network request.
+        try store.enqueueBatch(items)
         schedule()
-        for id in ids { await drain(id: id) }
-        let items = try store.items()
-        return ids.compactMap { id in items.first { $0.id == id } }
+        for (index, id) in ids.enumerated() {
+            progress?(index + 1, id)
+            await drain(id: id)
+        }
+        let stored = try store.items()
+        return ids.compactMap { id in stored.first { $0.id == id } }
     }
     func drain(id: String? = nil, expedite: Bool = false) async {
         guard !draining else { return }
@@ -74,10 +90,11 @@ actor OutboxDelivery {
         var input = try item.input()
         if input.localFile != nil {
             let targets = item.group ?? [item.chain?.first ?? item.capability]
-            guard targets.allSatisfy({ $0.manifest.file_input == "path" || $0.manifest.execution?.kind == "save_file" }) else {
-                throw ClientError.message("This action uses the old inline-file adapter. Update it for large-file paths, or choose Save to server. Your file remains in Outbox.")
+            if targets.allSatisfy({ $0.manifest.file_input == "path" || $0.manifest.execution?.kind == "save_file" }) {
+                input = try await upload(item, input: input, client: client, progress: progress, store: store)
+            } else {
+                input = try input.inlineFile()
             }
-            input = try await upload(item, input: input, client: client, progress: progress, store: store)
         }
         guard try store.owns(item) else { throw CancellationError() }
         if let chain = item.chain {

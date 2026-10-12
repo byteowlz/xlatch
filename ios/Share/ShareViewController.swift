@@ -15,6 +15,9 @@ final class ShareViewController: UIViewController {
 }
 
 @MainActor final class ShareModel: ObservableObject {
+    @Published var extraInputs: [ShareInput] = []
+    @Published var batchPosition: String?
+    var contents: [ShareInput] { content.map { [$0] + extraInputs.map { $0.addingText(additionalText) } } ?? [] }
     @Published var input: ShareInput?
     @Published var pageInput: ShareInput?
     @Published var includePageText = false
@@ -49,7 +52,8 @@ final class ShareViewController: UIViewController {
     @Published var error: String?
     private let context: NSExtensionContext?
     private var requestKeys: [String: String] = [:]
-    private let parkID = UUID().uuidString
+    private var parkedIndices: Set<Int> = []
+    var hasParkedItems: Bool { !parkedIndices.isEmpty }
     private var completed = false
     init(context: NSExtensionContext?) { self.context = context }
     func done() {
@@ -63,13 +67,14 @@ final class ShareViewController: UIViewController {
         do {
             guard let items = context?.inputItems as? [NSExtensionItem] else { throw ClientError.message("No shareable content was provided.") }
             let providers = items.flatMap { $0.attachments ?? [] }
-            guard let provider = ShareContentLoader.provider(in: providers) else { throw ClientError.message("No shareable content was provided.") }
             if let page = await Self.page(in: items) {
+                extraInputs = []
                 pageInput = .text(try page.text())
                 input = page.sharedURLs.first.map { .text($0, mime: "text/uri-list") } ?? pageInput
             } else {
                 pageInput = nil
-                input = try await ShareContentLoader.load(provider)
+                let loaded = try await ShareContentLoader.loadAll(providers)
+                input = loaded.first; extraInputs = Array(loaded.dropFirst())
             }
             connections = try CredentialStore.loadAll()
             guard !connections.isEmpty else { throw ClientError.message("Open xlatch and pair a server first.") }
@@ -102,7 +107,7 @@ final class ShareViewController: UIViewController {
     var choices: [ShareTarget] {
         let servers = chainConnection.map { [$0] } ?? connections
         return ShareActionPreferences.orderedTargets(servers.flatMap { server in
-            let source = chain.isEmpty ? (catalogs[server.id] ?? []).filter { capability in content.map { capability.accepts($0.mime) } ?? false } : nextSteps
+            let source = chain.isEmpty ? (catalogs[server.id] ?? []).filter { capability in !contents.isEmpty && contents.allSatisfy { capability.accepts($0.mime) } } : nextSteps
             let disabled = ShareActionPreferences.disabled(deviceID: server.deviceID)
             let ordered = ShareActionPreferences.ordered(source.filter { !disabled.contains($0.id) }, deviceID: server.deviceID)
             return ordered.filter { !selectingGroup || Self.isLeaf($0) }.map { ShareTarget(capability: $0, connection: server) }
@@ -181,21 +186,36 @@ final class ShareViewController: UIViewController {
     }
     func sendGroup() async {
         let targets = selectedGroup
-        guard targets.count >= 2, sending == nil, let input = content else { return }
-        sending = "send-group"; error = nil; defer { sending = nil; uploadingID = nil }
+        guard targets.count >= 2, sending == nil, !contents.isEmpty else { return }
+        sending = "send-group"; error = nil
+        defer { sending = nil; uploadingID = nil; batchPosition = nil }
+        await sendBatch(targets: targets)
+    }
+    private func sendBatch(targets: [ShareTarget], steps: [Capability]? = nil) async {
+        let inputs = contents
+        let suffix = includePageText ? ":page" : ":original"
+        let targetKeys = targets.map { target in
+            let revisions = (steps ?? [target.capability]).map(\.revision).joined(separator: ">")
+            return target.id + "@" + revisions
+        }
+        let keyIDs = inputs.indices.flatMap { index in targetKeys.map { $0 + ":item-\(index)" + suffix } }
+        let ids = keyIDs.map { keyID -> String in
+            let id = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = id; return id
+        }
         do {
-            let ids = targets.map { target -> String in
-                let keyID = target.id + "@" + target.capability.revision + (includePageText ? ":page" : ":original")
-                let key = requestKeys[keyID] ?? UUID().uuidString
-                requestKeys[keyID] = key
-                return key
+            groupReceipts = try await OutboxDelivery.shared.submitBatch(inputs, targets: targets, ids: ids, chain: steps) { [weak self] position, id in
+                Task { @MainActor in self?.batchPosition = "Sending \(position) of \(ids.count)"; self?.uploadingID = id }
             }
-            groupReceipts = try await OutboxDelivery.shared.submitMultiple(input, targets: targets, ids: ids)
             groupFailures = []
-            for (item, target) in zip(groupReceipts, targets) {
+            for (index, item) in groupReceipts.enumerated() {
+                let target = targets[index % targets.count]
                 receipt = item
-                do { try await observeReceipt(keyID: target.id + "@" + target.capability.revision + (includePageText ? ":page" : ":original"), connection: target.connection) }
-                catch { groupFailures.append(ServerPresentation.label(for: target.connection) + " · " + target.capability.manifest.title + ": " + error.localizedDescription) }
+                if item.state == .paused || item.state == .expired || item.state == .cancelled {
+                    groupFailures.append(item.label + ": " + (item.detail ?? item.confirmation))
+                    continue
+                }
+                do { try await observeReceipt(keyID: keyIDs[index], connection: target.connection) }
+                catch { groupFailures.append(item.label + " · " + target.capability.manifest.title + ": " + error.localizedDescription) }
             }
             receipt = groupReceipts.first
             sent = true
@@ -204,10 +224,14 @@ final class ShareViewController: UIViewController {
     func send(_ target: ShareTarget) async {
         let capability = target.capability
         guard sending == nil, !findingSteps, chain.count < 16, choices.contains(where: { $0.id == target.id }), let input = content else { return }
-        sending = target.id; error = nil; defer { sending = nil; uploadingID = nil }
+        sending = target.id; error = nil; defer { sending = nil; uploadingID = nil; batchPosition = nil }
         do {
             let connection = target.connection
             let steps = chain.isEmpty ? [capability] : chain + [capability]
+            if contents.count > 1 {
+                await sendBatch(targets: [ShareTarget(capability: steps[0], connection: connection)], steps: chain.isEmpty ? nil : steps)
+                return
+            }
             let keyID = connection.id + ":" + steps.map { $0.id + "@" + $0.revision }.joined(separator: ">") + (includePageText ? ":page" : ":original")
             let key = requestKeys[keyID] ?? UUID().uuidString; requestKeys[keyID] = key
             uploadingID = key
@@ -238,26 +262,31 @@ final class ShareViewController: UIViewController {
         }
     }
     func park() async {
-        guard sending == nil, let original = content else { return }
-        sending = "park"; error = nil; parkProgress = original.localFile == nil ? nil : UploadProgress(sent: 0, total: 0)
-        defer { sending = nil; parkProgress = nil }
+        guard sending == nil, !contents.isEmpty else { return }
+        sending = "park"; error = nil
+        defer { sending = nil; parkProgress = nil; batchPosition = nil }
         do {
             guard let connection else { throw ClientError.message("Choose a server for Save for later.") }
             let client = try APIClient(connection: connection)
-            let input = try await client.upload(original, id: parkID) { [weak self] sent, total in
-                Task { @MainActor in self?.parkProgress = UploadProgress(sent: sent, total: total) }
+            let inputs = contents
+            for (index, original) in inputs.enumerated() where !parkedIndices.contains(index) {
+                batchPosition = "Saving \(index + 1) of \(inputs.count)"
+                let key = "park-\(index)"
+                let id = requestKeys[key] ?? UUID().uuidString; requestKeys[key] = id
+                let input = try await client.upload(original, id: id) { [weak self] sent, total in
+                    Task { @MainActor in self?.parkProgress = UploadProgress(sent: sent, total: total) }
+                }
+                var request: [String: Any] = ["op": "park", "id": id, "label": String(input.label.prefix(500)), "mime_type": input.mime, "input": input.payload]
+                if original.mime == "text/uri-list", let selected = ShareActionPreferences.saveForLaterPreparation(deviceID: connection.deviceID),
+                   let capability = capabilities.first(where: { $0.id == selected && $0.accepts(original.mime) }) {
+                    request["preparation"] = ["capability_id": capability.id, "revision": capability.revision]
+                }
+                let _: ParkedItem = try await client.rpc(request)
+                parkedIndices.insert(index)
             }
-            var request: [String: Any] = ["op":"park", "id":parkID,
-                "label":String(input.label.prefix(500)), "mime_type":input.mime, "input":input.payload]
-            if original.mime == "text/uri-list", let deviceID,
-               let selected = ShareActionPreferences.saveForLaterPreparation(deviceID: deviceID),
-               let capability = capabilities.first(where: { $0.id == selected && $0.accepts(original.mime) }) {
-                request["preparation"] = ["capability_id": capability.id, "revision": capability.revision]
-            }
-            let _: ParkedItem = try await client.rpc(request)
-            if let localFile = original.localFile { try? FileManager.default.removeItem(at: localFile) }
+            for input in inputs { if let file = input.localFile { try? FileManager.default.removeItem(at: file) } }
             parked = true; sent = true
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = "Saved \(parkedIndices.count) of \(contents.count) items. Tap Save for later to retry the remaining items. " + error.localizedDescription }
     }
     private static func page(in items: [NSExtensionItem]) async -> CapturedContext? {
         for provider in items.flatMap({ $0.attachments ?? [] }) where provider.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier) {
@@ -317,12 +346,13 @@ struct ShareView: View {
     private var confirmation: some View {
         VStack(spacing: 20) {
             Image(systemName: "checkmark.circle").font(.system(size: 48)).foregroundStyle(.tint)
-            Text(!model.groupReceipts.isEmpty ? (model.groupFailures.isEmpty ? "Shared to \(model.groupReceipts.count) targets" : "Some targets need attention") : (model.parked ? "Saved for later" : (model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone"))).font(.title2.bold())
+            Text(!model.groupReceipts.isEmpty ? (model.groupFailures.isEmpty ? "\(model.groupReceipts.count) shares saved" : "Some items need attention") : (model.parked ? "Saved for later" : (model.receipt?.state == .sent ? "Sent to your server" : "Saved on this iPhone"))).font(.title2.bold())
             Text(model.parked ? "Open Later in xlatch whenever you are ready to choose a target." : (model.receipt?.confirmation ?? "Open xlatch’s Outbox to check delivery."))
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
             ForEach(model.groupReceipts) { item in
                 VStack(alignment: .leading) {
-                    Text(item.capability.manifest.title).font(.headline)
+                    Text(item.label).font(.headline).lineLimit(2)
+                    Text(item.capability.manifest.title).font(.subheadline)
                     if let server = model.connections.first(where: { $0.deviceID == item.deviceID && $0.pin == item.serverPin }) {
                         Text(ServerPresentation.label(for: server)).font(.caption).foregroundStyle(.secondary)
                     }
@@ -340,7 +370,11 @@ struct ShareView: View {
     }
     private var actionList: some View {
         List {
-            if let input = model.content { Section("Sharing") { Text(input.label).lineLimit(3) } }
+            if let input = model.content { Section("Sharing") {
+                if model.contents.count > 1 { Text("\(model.contents.count) items").font(.headline) }
+                Text(input.label).lineLimit(3)
+                ForEach(Array(model.extraInputs.enumerated()), id: \.offset) { _, item in Text(item.label).lineLimit(2) }
+            } }
             if model.content != nil {
                 Section("Add text") {
                     TextField("Optional note or instructions", text: $model.additionalText, axis: .vertical)
@@ -348,7 +382,7 @@ struct ShareView: View {
                         .multilineTextAlignment(.leading)
                         .foregroundStyle(.primary)
                         .accessibilityLabel("Additional text")
-                        .disabled(model.sending != nil)
+                        .disabled(model.sending != nil || model.hasParkedItems)
                 }
                 Section {
                     if model.connections.count > 1 {
@@ -361,7 +395,7 @@ struct ShareView: View {
                             }
                         )) {
                             ForEach(model.connections, id: \.id) { server in Text(ServerPresentation.label(for: server)).tag(server.id) }
-                        }
+                        }.disabled(model.sending != nil || model.hasParkedItems)
                     }
                     Button { Task { await model.park() } } label: {
                         Label(model.sending == "park" ? "Saving…" : "Save for later", systemImage: "bookmark")
@@ -382,11 +416,14 @@ struct ShareView: View {
                 Section {
                     Text(error).foregroundStyle(.red)
                     Button("Try again") { Task {
-                        if model.chain.isEmpty { await model.load() } else { await model.refreshSteps() }
+                        if model.content == nil { await model.load() } else if model.chain.isEmpty {
+                            for server in model.connections { await model.refreshServer(server) }
+                        } else { await model.refreshSteps() }
                     } }
                 }
             }
             if model.loading || model.findingSteps { ProgressView("Finding compatible actions…") }
+            if let position = model.batchPosition { Section { Text(position); ProgressView() } }
             if let progress = model.parkProgress { Section { UploadProgressBar(progress: progress) } }
             else if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
             if model.content != nil { targets }
