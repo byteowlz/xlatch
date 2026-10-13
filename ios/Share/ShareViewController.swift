@@ -17,7 +17,10 @@ final class ShareViewController: UIViewController {
 @MainActor final class ShareModel: ObservableObject {
     @Published var extraInputs: [ShareInput] = []
     @Published var batchPosition: String?
-    var contents: [ShareInput] { content.map { [$0] + extraInputs.map { $0.addingText(additionalText) } } ?? [] }
+    var contents: [ShareInput] {
+        guard let original = includePageText ? pageInput ?? input : input else { return [] }
+        return ShareInput.batch([original] + extraInputs, addingText: additionalText)
+    }
     @Published var input: ShareInput?
     @Published var pageInput: ShareInput?
     @Published var includePageText = false

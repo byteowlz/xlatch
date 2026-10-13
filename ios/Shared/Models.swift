@@ -202,6 +202,10 @@ struct ShareInput {
     static func text(_ text: String, mime: String = "text/plain") -> ShareInput {
         ShareInput(mime: mime, label: text, payload: ["text": text, "mime_type": mime])
     }
+    static func batch(_ inputs: [ShareInput], addingText note: String) -> [ShareInput] {
+        guard let first = inputs.first else { return [] }
+        return [first.addingText(note)] + inputs.dropFirst()
+    }
     func addingText(_ note: String) -> ShareInput {
         guard !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return self }
         var updated = payload

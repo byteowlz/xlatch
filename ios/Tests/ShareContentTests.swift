@@ -139,3 +139,18 @@ extension ShareContentTests {
         XCTAssertEqual((inline.payload["file"] as? [String: String])?["data_base64"], Data([1, 2, 3]).base64EncodedString())
     }
 }
+
+
+extension ShareContentTests {
+    func testBatchAddsSenderNoteOnlyToFirstAttachment() {
+        let photos = ["one.png", "two.png"].map { name in
+            ShareInput(mime: "image/png", label: name, payload: ["file": ["name": name]])
+        }
+        let batch = ShareInput.batch(photos, addingText: "Compare these photos")
+        XCTAssertEqual(batch.map(\.label), ["one.png", "two.png"])
+        XCTAssertEqual(batch.compactMap { $0.payload["text"] as? String }, ["Compare these photos"])
+        XCTAssertNotNil(batch[0].payload["file"])
+        XCTAssertNotNil(batch[1].payload["file"])
+        XCTAssertTrue(ShareInput.batch([], addingText: "note").isEmpty)
+    }
+}
