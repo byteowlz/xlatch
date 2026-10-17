@@ -803,10 +803,7 @@ fn phone_capability_approval_binds_manifest_targets_and_decision() -> Result<()>
         revision: cap.revision.clone(),
         devices: vec![other.clone()],
     };
-    let payload = approval_rpc(&mut store, &owner, prepare)?
-        .as_str()
-        .context("review payload")?
-        .to_owned();
+    let payload = prepared_payload(&mut store, &owner, prepare)?;
     assert_eq!(store.capability(&action.id)?.status, "pending");
     for (pointer, value) in [
         ("/devices", json!([])),
@@ -860,7 +857,7 @@ fn phone_capability_approval_binds_manifest_targets_and_decision() -> Result<()>
         "other",
     )?;
     let mut reopened = Store::initialize(&fixture.0)?;
-    let payload = approval_rpc(
+    let payload = prepared_payload(
         &mut reopened,
         &owner,
         ApprovalRequest::Prepare {
@@ -868,10 +865,7 @@ fn phone_capability_approval_binds_manifest_targets_and_decision() -> Result<()>
             revision: cap.revision.clone(),
             devices: vec![owner.clone()],
         },
-    )?
-    .as_str()
-    .context("payload")?
-    .to_owned();
+    )?;
     approval_rpc(
         &mut reopened,
         &owner,
@@ -1236,7 +1230,7 @@ fn content_history_omits_binary_and_enforces_expiry_without_deleting_jobs() -> R
 }
 
 fn composed_fixture(
-    store: &mut Store,
+    store: &Store,
     binding: xlatch_core::composition::Binding,
 ) -> Result<xlatch_core::capability::Capability> {
     use xlatch_core::composition::{Binding, Step};
@@ -1296,7 +1290,7 @@ fn composition_delegates_only_reviewed_steps_and_checkpoints_across_restart() ->
     use xlatch_core::composition::Binding;
     let fixture = Fixture::new()?;
     let mut store = fixture.store()?;
-    let cap = composed_fixture(&mut store, Binding::Previous)?;
+    let cap = composed_fixture(&store, Binding::Previous)?;
     let (owner, _) = pair(&mut store, 111)?;
     store.grant(&owner, "composed", &cap.revision)?;
     let conn = rusqlite::Connection::open(fixture.0.join("xlatch.sqlite3"))?;
@@ -1356,7 +1350,7 @@ fn composition_mapping_failure_preserves_result_and_never_starts_next_step() -> 
             },
         )]),
     };
-    let cap = composed_fixture(&mut store, binding)?;
+    let cap = composed_fixture(&store, binding)?;
     let parent = store.invoke(
         "local",
         "composed",
@@ -1380,7 +1374,7 @@ fn composition_cancellation_and_changed_dependencies_stop_delegation() -> Result
     use xlatch_core::composition::Binding;
     let fixture = Fixture::new()?;
     let mut store = fixture.store()?;
-    let cap = composed_fixture(&mut store, Binding::Previous)?;
+    let cap = composed_fixture(&store, Binding::Previous)?;
     let input = json!({"text":"test"});
     let parent = store.invoke("local", "composed", &cap.revision, &input, "cancel")?;
     let first = claim_step(&mut store)?.context("step")?;
@@ -1438,7 +1432,7 @@ fn composition_enforces_final_receipt_and_never_replays_uncertain_step() -> Resu
     use xlatch_core::composition::Binding;
     let fixture = Fixture::new()?;
     let mut store = fixture.store()?;
-    let mut cap = composed_fixture(&mut store, Binding::Previous)?;
+    let mut cap = composed_fixture(&store, Binding::Previous)?;
     cap.manifest.output_schema =
         json!({"type":"object","required":["ok"],"properties":{"ok":{"const":true}}});
     cap = store.register(&cap.manifest)?;
@@ -1466,7 +1460,7 @@ fn one_off_chain_requires_each_grant_and_never_activates_targets() -> Result<()>
     use xlatch_core::{chain::Reference, composition::Binding};
     let fixture = Fixture::new()?;
     let mut store = fixture.store()?;
-    composed_fixture(&mut store, Binding::Previous)?;
+    composed_fixture(&store, Binding::Previous)?;
     let (owner, _) = pair(&mut store, 115)?;
     let second = store.capability("second")?;
     let refs = vec![
@@ -1533,7 +1527,7 @@ fn fan_out_sends_original_input_to_every_target_and_can_be_saved() -> Result<()>
     use xlatch_core::{chain::Reference, composition::Binding};
     let fixture = Fixture::new()?;
     let mut store = fixture.store()?;
-    composed_fixture(&mut store, Binding::Previous)?;
+    composed_fixture(&store, Binding::Previous)?;
     let (owner, _) = pair(&mut store, 117)?;
     let second = store.capability("second")?;
     let refs = vec![
@@ -1581,7 +1575,7 @@ fn one_off_chain_stops_after_grant_revocation() -> Result<()> {
     use xlatch_core::{chain::Reference, composition::Binding};
     let fixture = Fixture::new()?;
     let mut store = fixture.store()?;
-    composed_fixture(&mut store, Binding::Previous)?;
+    composed_fixture(&store, Binding::Previous)?;
     let (owner, _) = pair(&mut store, 116)?;
     let second = store.capability("second")?;
     store.grant(&owner, "second", &second.revision)?;
@@ -1924,6 +1918,14 @@ fn protected_upload_reads_require_live_job_lease_and_preserve_active_bytes() -> 
     Ok(())
 }
 
+fn fixture_device(store: &Store, id: &str) -> Result<xlatch_core::auth::Device> {
+    store
+        .devices()?
+        .into_iter()
+        .find(|d| d.id == id)
+        .context("device")
+}
+
 #[test]
 fn device_aliases_and_signed_removal_preserve_identity_and_cancel_jobs() -> Result<()> {
     use xlatch_core::device_management::{Change, DeviceRequest, decision_bytes, dispatch};
@@ -1941,12 +1943,7 @@ fn device_aliases_and_signed_removal_preserve_identity_and_cancel_jobs() -> Resu
         &json!({"text":"queued"}),
         "remove-device",
     )?;
-    let original = store
-        .devices()?
-        .into_iter()
-        .find(|d| d.id == target)
-        .context("device")?
-        .name;
+    let original = fixture_device(&store, &target)?.name;
     store.change_device_local(
         &target,
         Change::Alias {
@@ -1954,11 +1951,7 @@ fn device_aliases_and_signed_removal_preserve_identity_and_cancel_jobs() -> Resu
         },
         false,
     )?;
-    let device = store
-        .devices()?
-        .into_iter()
-        .find(|d| d.id == target)
-        .context("device")?;
+    let device = fixture_device(&store, &target)?;
     assert_eq!(
         (device.name, device.alias),
         (original, Some("MacBook".into()))
@@ -1977,14 +1970,7 @@ fn device_aliases_and_signed_removal_preserve_identity_and_cancel_jobs() -> Resu
     );
     let queued = store.change_device_local(&target, Change::Remove, true)?;
     assert_eq!(queued["pending"], true);
-    assert!(
-        !store
-            .devices()?
-            .into_iter()
-            .find(|d| d.id == target)
-            .context("device")?
-            .revoked
-    );
+    assert!(!fixture_device(&store, &target)?.revoked);
     let payload = queued["payload"].as_str().context("review")?;
     let review: serde_json::Value = serde_json::from_str(payload)?;
     let id = review["id"].as_str().context("review id")?.to_owned();
@@ -2001,14 +1987,7 @@ fn device_aliases_and_signed_removal_preserve_identity_and_cancel_jobs() -> Resu
     assert!(dispatch(&mut store, &phone, forged).is_err());
     dispatch(&mut store, &phone, request.clone())?;
     assert!(dispatch(&mut store, &phone, request).is_err());
-    assert!(
-        store
-            .devices()?
-            .into_iter()
-            .find(|d| d.id == target)
-            .context("device")?
-            .revoked
-    );
+    assert!(fixture_device(&store, &target)?.revoked);
     assert_eq!(store.job(&target, &job.id)?.status, "cancelled");
     assert!(
         store

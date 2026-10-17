@@ -32,29 +32,32 @@ pub fn admin_path(path: &Path) -> Result<()> {
 /// Inspect extended permissions in addition to POSIX mode bits.
 /// # Errors
 /// Rejects writable macOS ACLs or an unsuccessful ACL inspection.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub fn check_acl(path: &Path) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("/bin/ls")
-            .args(["-lde"])
-            .arg(path)
-            .output()?;
-        ensure!(output.status.success(), "cannot inspect protected path ACL");
-        let text = String::from_utf8(output.stdout)?;
-        for line in text.lines().skip(1) {
-            ensure!(
-                !(line.contains(" allow ")
-                    && ["write", "add_file", "add_subdirectory", "delete", "chown"]
-                        .iter()
-                        .any(|right| line.contains(right))),
-                "protected path has a writable ACL: {}",
-                path.display()
-            );
-        }
+    let output = std::process::Command::new("/bin/ls")
+        .args(["-lde"])
+        .arg(path)
+        .output()?;
+    ensure!(output.status.success(), "cannot inspect protected path ACL");
+    let text = String::from_utf8(output.stdout)?;
+    for line in text.lines().skip(1) {
+        ensure!(
+            !(line.contains(" allow ")
+                && ["write", "add_file", "add_subdirectory", "delete", "chown"]
+                    .iter()
+                    .any(|right| line.contains(right))),
+            "protected path has a writable ACL: {}",
+            path.display()
+        );
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = path;
+    Ok(())
+}
+
+/// POSIX ownership and mode checks are performed by the caller on other Unix hosts.
+/// # Errors
+/// This platform needs no additional macOS ACL inspection.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub const fn check_acl(_path: &Path) -> Result<()> {
     Ok(())
 }
 

@@ -1059,7 +1059,7 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "byteowlz-tui-kit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -10896,7 +10896,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xlatch"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -10929,7 +10929,7 @@ dependencies = [
 
 [[package]]
 name = "xlatch-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -10953,11 +10953,12 @@ dependencies = [
  "toml 0.9.11+spec-1.1.0",
  "url",
  "uuid",
+ "xlatch-wire-auth",
 ]
 
 [[package]]
 name = "xlatch-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -10978,7 +10979,7 @@ dependencies = [
 
 [[package]]
 name = "xlatch-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -10994,7 +10995,7 @@ dependencies = [
 
 [[package]]
 name = "xlatch-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "byteowlz-tui-kit",
@@ -11006,6 +11007,17 @@ dependencies = [
  "serde",
  "tokio",
  "xlatch-core",
+]
+
+[[package]]
+name = "xlatch-wire-auth"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

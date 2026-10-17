@@ -13,6 +13,7 @@ description = "Capability contracts, authorization, persistence, and execution f
 workspace = true
 
 [dependencies]
+xlatch-wire-auth.workspace = true
 image.workspace = true
 resvg.workspace = true
 anyhow.workspace = true

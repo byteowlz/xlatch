@@ -5,10 +5,10 @@ use crate::{
     store::{Store, now},
 };
 use anyhow::{Context, Result, ensure};
-use base64::{Engine, engine::general_purpose::STANDARD};
-use ed25519_dalek::{Signature, VerifyingKey};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use xlatch_wire_auth::CROSSLATCH_V1;
+pub use xlatch_wire_auth::{Enrollment, SignedRequest};
 
 /// Out-of-band bootstrap, displayed only to the local operator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,42 +28,6 @@ pub struct PairingTicket {
     pub expires_at: i64,
 }
 
-/// Device proof of possession submitted over pinned TLS.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Enrollment {
-    /// Enrollment secret from the QR code.
-    pub token: String,
-    /// User-facing device name.
-    pub name: String,
-    /// Base64-encoded raw 32-byte Ed25519 public key.
-    pub public_key: String,
-    /// Base64 signature of `xlatch.pair.v1\n{token}\n{public_key}\n{name}`.
-    pub signature: String,
-}
-
-impl Enrollment {
-    fn verify(&self) -> Result<()> {
-        ensure!(
-            self.token.len() == 64
-                && !self.name.trim().is_empty()
-                && self.name.len() <= 120
-                && !self.name.contains('\n'),
-            "invalid enrollment"
-        );
-        verify(
-            &self.public_key,
-            &self.signature,
-            format!(
-                "xlatch.pair.v1\n{}\n{}\n{}",
-                self.token, self.public_key, self.name
-            )
-            .as_bytes(),
-        )?;
-        Ok(())
-    }
-}
-
 /// Authenticated device metadata, with no private keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -77,45 +41,6 @@ pub struct Device {
     pub revoked: bool,
     /// Active or pending; pending devices cannot invoke capabilities.
     pub enrollment_status: String,
-}
-
-/// Signed RPC envelope. Payload is the exact UTF-8 JSON string signed by the client.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SignedRequest {
-    /// Paired identity.
-    pub device_id: String,
-    /// Unix time; tolerated clock skew is 60 seconds.
-    pub timestamp: i64,
-    /// Unique, caller-generated request nonce.
-    pub nonce: String,
-    /// JSON-encoded core request.
-    pub payload: String,
-    /// Base64 Ed25519 signature.
-    pub signature: String,
-}
-
-impl SignedRequest {
-    /// Domain-separated signing bytes, independent of envelope JSON formatting.
-    #[must_use]
-    pub fn signing_bytes(&self) -> Vec<u8> {
-        format!(
-            "xlatch.rpc.v1\n{}\n{}\n{}\n{}",
-            self.device_id, self.timestamp, self.nonce, self.payload
-        )
-        .into_bytes()
-    }
-}
-
-fn verify(public_key: &str, signature: &str, bytes: &[u8]) -> Result<()> {
-    let key: [u8; 32] = STANDARD
-        .decode(public_key)?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("invalid public key length"))?;
-    let key = VerifyingKey::from_bytes(&key)?;
-    let signature = Signature::from_slice(&STANDARD.decode(signature)?)?;
-    key.verify_strict(bytes, &signature)
-        .context("invalid signature")
 }
 
 impl Store {
@@ -247,18 +172,6 @@ impl Store {
     /// # Errors
     /// Rejects revoked devices, clock skew, forged requests and replays.
     pub fn authenticate(&self, request: &SignedRequest) -> Result<Request> {
-        ensure!(
-            (16..=120).contains(&request.nonce.len())
-                && request
-                    .nonce
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)),
-            "invalid nonce"
-        );
-        ensure!(
-            now().abs_diff(request.timestamp) <= 60,
-            "request expired; check device clock"
-        );
         let key: Option<String> = self
             .conn
             .query_row(
@@ -267,10 +180,10 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()?;
-        verify(
+        request.verify_for(
+            CROSSLATCH_V1,
             &key.context("unknown or revoked device")?,
-            &request.signature,
-            &request.signing_bytes(),
+            now(),
         )?;
         let payload = serde_json::from_str(&request.payload)?;
         self.conn
