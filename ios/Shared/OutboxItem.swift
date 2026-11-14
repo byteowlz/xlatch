@@ -43,7 +43,11 @@ struct OutboxItem: Codable, Identifiable {
         digest.update(data: payload ?? Data())
         if let url = input.localFile {
             let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
-            while let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty { digest.update(data: chunk) }
+            while try autoreleasepool(invoking: {
+                guard let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty else { return false }
+                digest.update(data: chunk)
+                return true
+            }) {}
         }
         payloadHash = Data(digest.finalize())
         guard let payload, payload.count <= 7 * 1024 * 1024 else { throw ClientError.message("This share exceeds the Outbox item limit.") }

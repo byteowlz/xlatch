@@ -138,10 +138,12 @@ mod tests {
     #[test]
     fn certificate_address_check_preserves_host_validation() -> Result<()> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let identity =
-            rcgen::generate_simple_self_signed(vec!["100.64.0.12".into(), "192.168.1.240".into()])?;
+        let identity = rcgen::generate_simple_self_signed(vec![
+            "203.0.113.12".into(),
+            "192.168.1.240".into(),
+        ])?;
         ensure!(
-            certificate_covers(identity.cert.der(), "https://100.64.0.12:7443"),
+            certificate_covers(identity.cert.der(), "https://203.0.113.12:7443"),
             "mesh SAN rejected"
         );
         ensure!(

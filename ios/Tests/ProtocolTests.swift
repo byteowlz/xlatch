@@ -49,7 +49,7 @@ extension ProtocolTests {
 extension ProtocolTests {
     func testRepeatedPairingCoalescesAuthenticatedServerWithoutLosingApprover() throws {
         let approver = Connection(url: "https://10.0.0.10:7898", pin: "certificate", deviceID: "original", privateKey: Data([1]), serverID: "server", approvalKeyID: "approval", keyPin: "tls-key")
-        let duplicate = Connection(url: "https://100.64.0.10:7898", pin: "certificate", deviceID: "duplicate", privateKey: Data([2]), keyPin: "tls-key")
+        let duplicate = Connection(url: "https://203.0.113.10:7898", pin: "certificate", deviceID: "duplicate", privateKey: Data([2]), keyPin: "tls-key")
         let result = CredentialStore.normalized([approver, duplicate])
         XCTAssertEqual(result.count, 1)
         let retained = try XCTUnwrap(result.first)
@@ -92,5 +92,32 @@ extension ProtocolTests {
         ShareActionPreferences.saveTargetOrder([b.id, a.id, b.id])
         XCTAssertEqual(ShareActionPreferences.orderedTargets([a, b]).map(\.id), [b.id, a.id])
         XCTAssertEqual(ShareActionPreferences.orderedTargets([a]).map(\.id), [a.id])
+    }
+}
+
+extension ProtocolTests {
+    func testFuzzyTargetSearchRanksNamesAliasesAndTyposWithoutChangingSavedOrder() {
+        let server = Connection(url: "https://search-fixture.invalid", pin: "fixture", deviceID: "search-fixture", privateKey: Data(), serverID: "search-fixture")
+        let previousAlias = ServerPresentation.alias(for: server)
+        let previousShow = ServerPresentation.showsAlias(for: server)
+        ServerPresentation.save(alias: "Mac Studio", show: true, for: server)
+        defer { ServerPresentation.save(alias: previousAlias, show: previousShow, for: server) }
+        let names = ["Send to pi (link-analysis)", "Generate slides", "Send to pi (kompressor)", "Café notes"]
+        let targets = names.enumerated().map { index, name in
+            ShareTarget(capability: Capability(manifest: Manifest(id: "search.\(index)", title: name, description: "", accepts: ["*/*"]), revision: "fixture", status: "active"), connection: server)
+        }
+        func found(_ query: String) -> [String] { ShareTargetSearch.filter(targets, query: query).map { $0.capability.manifest.title } }
+        XCTAssertEqual(found(""), names)
+        XCTAssertEqual(found("  \n"), names)
+        XCTAssertEqual(found("kmpr"), [names[2]])
+        XCTAssertEqual(found("slieds"), [names[1]])
+        XCTAssertEqual(found("CAFE"), [names[3]])
+        XCTAssertEqual(found("mac slides"), [names[1]])
+        XCTAssertEqual(found("mac studio"), names)
+        XCTAssertEqual(found("slides nonexistent"), [])
+        XCTAssertEqual(found("zzzz"), [])
+        XCTAssertEqual(targets.map { $0.capability.manifest.title }, names)
+        let prefix = ShareTarget(capability: Capability(manifest: Manifest(id: "prefix", title: "Slideshows archive", description: "", accepts: ["*/*"]), revision: "fixture", status: "active"), connection: server)
+        XCTAssertEqual(ShareTargetSearch.filter([prefix, targets[1]], query: "slides").first?.id, targets[1].id)
     }
 }

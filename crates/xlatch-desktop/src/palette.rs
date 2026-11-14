@@ -67,6 +67,9 @@ impl Palette {
         } else {
             serde_json::to_value(toml::from_str::<toml::Value>(body)?)?
         };
+        if value.get("themes").is_some() {
+            return Self::rune(&value);
+        }
         if value.get("background").is_some() {
             return Self::omarchy(&value);
         }
@@ -109,6 +112,47 @@ impl Palette {
             slots,
             radius: scheme.radius,
         })
+    }
+
+    /// Design Studio's `rune-theme` adapter output (schema 1): the first theme's
+    /// 24 slots. Shape stays the app's own identity, so the radius dial is xlatch's.
+    fn rune(value: &serde_json::Value) -> Result<Self> {
+        ensure!(
+            value["schema"].as_u64() == Some(1),
+            "unsupported Rune theme schema"
+        );
+        let theme = value["themes"].get(0).context("Rune theme has no themes")?;
+        let mode = theme["mode"].as_str().context("Rune theme has no mode")?;
+        ensure!(
+            matches!(mode, "dark" | "light"),
+            "mode must be dark or light"
+        );
+        let mut slots = [0; 24];
+        for (i, slot) in slots.iter_mut().enumerate() {
+            let key = format!("base{i:02X}");
+            *slot = color(
+                theme["slots"][&key]
+                    .as_str()
+                    .with_context(|| format!("Missing {key}"))?,
+            )?;
+        }
+        Ok(Self {
+            name: theme["name"]
+                .as_str()
+                .context("Rune theme has no name")?
+                .into(),
+            dark: mode == "dark",
+            slots,
+            radius: default_radius(),
+        })
+    }
+
+    /// The byteowlz 2 House scheme: the default look, shared with fdbk, faceman
+    /// and trnscrb (vendored Design Studio output; see `docs/desktop/THEMING.md`).
+    /// # Errors
+    /// Only if the vendored file is malformed.
+    pub fn house() -> Result<Self> {
+        Self::parse(HOUSE, true)
     }
 
     fn omarchy(value: &serde_json::Value) -> Result<Self> {
@@ -219,15 +263,8 @@ fn luminance(color: u32) -> f64 {
         .sum()
 }
 
-/// Highest-contrast black or white foreground for filled actions.
-#[must_use]
-pub fn on_color(color: u32) -> u32 {
-    if luminance(color) > 0.179 {
-        0
-    } else {
-        0x00ff_ffff
-    }
-}
+/// Design Studio's generated House theme, byte-for-byte (`just sync-house-theme`).
+pub const HOUSE: &str = include_str!("../themes/house.rune.json");
 
 /// Candidate precedence for automatic theming; resolve paths afresh on each reload.
 #[must_use]
@@ -245,7 +282,7 @@ mod tests {
     #[test]
     fn base16_matches_reference_derivation_and_preserves_explicit_slots() -> Result<()> {
         let mut value: serde_json::Value =
-            serde_json::from_str(include_str!("../themes/dark.json"))?;
+            serde_json::from_str(include_str!("../themes/light.json"))?;
         value["system"] = "base16".into();
         let mut palette = value["slots"].as_object().context("slots")?.clone();
         for index in 16..24 {
@@ -274,10 +311,7 @@ mod tests {
     }
     #[test]
     fn house_text_meets_contrast_floor() -> Result<()> {
-        for body in [
-            include_str!("../themes/dark.json"),
-            include_str!("../themes/light.json"),
-        ] {
+        for body in [HOUSE, include_str!("../themes/light.json")] {
             let p = Palette::parse(body, true)?;
             for foreground in [p.slots[4], p.slots[5]] {
                 for background in [p.slots[0], p.slots[1], p.slots[17]] {
@@ -291,6 +325,23 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+    #[test]
+    fn house_rune_theme_maps_studio_slots_unchanged() -> Result<()> {
+        let house = Palette::house()?;
+        ensure!(house.name == "House Dark" && house.dark && house.radius == 8);
+        ensure!(house.slots[0] == 0 && house.slots[5] == 0x00ff_ffff);
+        ensure!(house.slots[11] == 0x0032_d74b && house.slots[17] == 0x0014_1416);
+        let mut value: serde_json::Value = serde_json::from_str(HOUSE)?;
+        value["schema"] = 2.into();
+        ensure!(Palette::parse(&value.to_string(), true).is_err());
+        let mut value: serde_json::Value = serde_json::from_str(HOUSE)?;
+        value["themes"][0]["slots"]
+            .as_object_mut()
+            .context("slots")?
+            .remove("base17");
+        ensure!(Palette::parse(&value.to_string(), true).is_err());
         Ok(())
     }
     #[test]
@@ -315,7 +366,7 @@ mod tests {
         let dark = directory.path().join("dark.json");
         let current = directory.path().join("current.json");
         std::fs::write(&light, include_str!("../themes/light.json"))?;
-        std::fs::write(&dark, include_str!("../themes/dark.json"))?;
+        std::fs::write(&dark, HOUSE)?;
         std::os::unix::fs::symlink(&dark, &current)?;
         ensure!(Palette::load(&current)?.dark);
         let next = directory.path().join("next");

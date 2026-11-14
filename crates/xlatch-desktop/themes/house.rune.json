@@ -1,0 +1,79 @@
+{
+  "design": "house",
+  "identity": {
+    "accent_font": "Inter",
+    "focus": "outline",
+    "focus_gap": 1,
+    "focus_width": 2,
+    "font": "Inter",
+    "font_size": 13.0,
+    "mono_font": "SF Mono",
+    "mono_font_size": 12.0,
+    "radius": 0.0
+  },
+  "material": {
+    "divider": 0.14,
+    "fill": 0.07,
+    "focus_ring": 2.0,
+    "glass": 0.6,
+    "glass_strong": 0.75,
+    "hairline": 0.1,
+    "hover": 0.1,
+    "ink": 0.92,
+    "ink_muted": 0.55,
+    "press": 0.16
+  },
+  "name": "House",
+  "schema": 1,
+  "themes": [
+    {
+      "colors": {
+        "accent": "#2c2c2e",
+        "background": "#000000",
+        "border": "#1c1c1e",
+        "danger": "#ff453a",
+        "foreground": "#ffffff",
+        "info": "#0a84ff",
+        "input": "#1c1c1e",
+        "muted": "#2c2c2e",
+        "muted-foreground": "#8e8e93",
+        "primary": "#32d74b",
+        "ring": "#32d74b",
+        "secondary": "#2c2c2e",
+        "success": "#32d74b",
+        "surface": "#1c1c1e",
+        "surface-sunken": "#141416",
+        "warning": "#ffd60a"
+      },
+      "id": "house-dark",
+      "mode": "dark",
+      "name": "House Dark",
+      "slots": {
+        "base00": "#000000",
+        "base01": "#1c1c1e",
+        "base02": "#2c2c2e",
+        "base03": "#48484a",
+        "base04": "#8e8e93",
+        "base05": "#ffffff",
+        "base06": "#f2f2f7",
+        "base07": "#ffffff",
+        "base08": "#ff453a",
+        "base09": "#ffb340",
+        "base0A": "#ffd60a",
+        "base0B": "#32d74b",
+        "base0C": "#0a84ff",
+        "base0D": "#0a84ff",
+        "base0E": "#bf5af2",
+        "base0F": "#8e8e93",
+        "base10": "#0a0a0a",
+        "base11": "#141416",
+        "base12": "#ff6961",
+        "base13": "#ffc86b",
+        "base14": "#5ce65f",
+        "base15": "#4a9dff",
+        "base16": "#4a9dff",
+        "base17": "#d08bff"
+      }
+    }
+  ]
+}

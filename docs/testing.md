@@ -43,6 +43,14 @@ python3 scripts/command-manifest.py examples/adapters/ffmpeg_wav.py --id audio-w
 
 The manifest generator supplies generic object schemas; tighten them to the exact adapter input/output contract before sharing beyond personal testing. The program is trusted host code, not isolated code.
 
+## Paired desktop client
+
+Run `just client-check` for isolated CLI/library HTTPS fixtures and desktop
+transport tests, or `just client --help` for commands. No running daemon or
+installed service is required. The fixture explicitly selects the Rustls ring
+provider and marks its TCP listener nonblocking before handing it to Tokio.
+See `docs/desktop/client.md` for the integration contract and platform limits.
+
 ## iOS
 
 Open `ios/XLatch.xcodeproj` in Xcode. The project includes a native SwiftUI app, share extension, shared Keychain/app-group entitlements, QR scanner, and tests. `ios/project.json` is the XcodeGen source.

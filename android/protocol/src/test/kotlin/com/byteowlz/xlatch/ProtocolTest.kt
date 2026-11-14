@@ -42,7 +42,7 @@ class ProtocolTest {
                 "https://localhost/?token=abc",
                 "https://localhost/#fragment",
             )) assertThrows(IllegalArgumentException::class.java) { origin(url) }
-        assertEquals("https://100.64.0.12:7898", origin("https://100.64.0.12:7898/"))
+        assertEquals("https://203.0.113.12:7898", origin("https://203.0.113.12:7898/"))
     }
 
     @Test

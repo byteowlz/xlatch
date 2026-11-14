@@ -1,0 +1,70 @@
+{
+  "id": "sessions.send",
+  "title": "Send to an agent session",
+  "description": "Paste text, and optionally one file, into a live coding-agent session chosen from List agent sessions. The session is re-checked before anything is typed; blocked sessions and plain shells are refused, and nothing is retried automatically. Prompting an agent can make it run code as this user. Files require hc. Optional xlatch adapter (ADR 0008).",
+  "file_input": "path",
+  "accepts": [
+    "text/plain",
+    "text/uri-list",
+    "text/markdown",
+    "application/zip",
+    "application/pdf",
+    "application/json",
+    "application/octet-stream",
+    "image/*"
+  ],
+  "input_schema": {
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+      "target": { "type": "string", "minLength": 3, "maxLength": 512 },
+      "text": { "type": "string", "maxLength": 65536 },
+      "mime_type": { "type": "string" },
+      "file": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["name", "mime_type", "data_base64"],
+            "properties": {
+              "name": { "type": "string" },
+              "mime_type": { "type": "string" },
+              "data_base64": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["artifact_id", "name", "mime_type", "size"],
+            "properties": {
+              "artifact_id": { "type": "string" },
+              "name": { "type": "string" },
+              "mime_type": { "type": "string" },
+              "size": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "anyOf": [{ "required": ["text"] }, { "required": ["file"] }],
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["provider", "target", "agent", "text_sha256"],
+    "properties": {
+      "provider": { "enum": ["hc", "herdr"] },
+      "target": { "type": "string" },
+      "agent": { "type": "string" },
+      "text_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+      "file_path": { "type": ["string", "null"] }
+    }
+  },
+  "execution": {
+    "kind": "command",
+    "program": "/ABSOLUTE/PATH/TO/xlatch-sessions",
+    "args": ["--hc", "/ABSOLUTE/PATH/TO/hc", "send"],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "timeout_seconds": 60
+}

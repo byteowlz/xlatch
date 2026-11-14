@@ -1,26 +1,42 @@
 # Desktop appearance
 
 xlatch follows byteowlz/design-system's slot → semantic role → native widget
-contract. Its own light/dark palettes keep the green identity. Theme colors also
+contract. The default is **byteowlz 2 House** (House Dark), the look shared with
+fdbk, faceman and trnscrb. House has no light scheme yet, so xlatch's own light
+palette remains the light option. Theme colors also
 cover buttons, inputs, caret, selection, sidebar, scrollbars and status states;
-the shared GPUI base theme is synchronized. Filled status/action text uses the
+Rune widgets project the same semantic roles. Filled status/action text uses the
 higher-contrast black or white foreground. Imported palette text colors remain
 author-controlled; a poor third-party palette may still have low contrast.
 
-`--theme auto` (default) checks these in order under `$XDG_CONFIG_HOME`, falling
-back to `~/.config`:
+`--theme house` (default; `dark` is an alias) uses House and ignores external
+palettes, as does `--theme light`. `--theme auto` checks these in order under
+`$XDG_CONFIG_HOME`, falling back to `~/.config`:
 
 1. `xlatch/theme.toml`
 2. `xlatch/theme.json`
 3. `omarchy/current/theme/colors.toml`
-4. xlatch light/dark, following the OS appearance.
+4. House or xlatch light, following the OS appearance.
 
-`--theme /absolute/path/theme.json` selects a file explicitly. `--theme dark` or
-`--theme light` ignores external palettes. Settings shows the actual source and
-provides session-only Auto/Light/Dark overrides. Startup flags are unchanged.
+`--theme /absolute/path/theme.json` selects a file explicitly. Settings shows the
+actual source and provides session-only House/Follow system/Light overrides. Startup flags are unchanged.
 Files are checked every two seconds off the UI thread, resolving symlinks anew;
 invalid updates retain the last valid palette and show an error in Settings.
 No shell hooks are executed by the app. The file limit is 64 KiB.
+
+## House (Design Studio Rune theme)
+
+`crates/xlatch-desktop/themes/house.rune.json` is Design Studio's generated
+`rune-theme` output for the `house` design, copied byte-for-byte; never edit it
+by hand. Source: the Studio consumer `xlatch-desktop` (`generated/xlatch-desktop/`;
+focus identity 2-point ring, 1-point gap), SHA-256
+`8f9004a81c73ae95ebabd9ab03b4714c5a0dc429d42fe0266b5f60b66638e0e5`.
+`just sync-house-theme` refreshes it from a sibling Design Studio checkout.
+
+xlatch reads the first theme's 24 slots (`base00`–`base17`) through the same
+slot → role mapping as every other palette, so a House update changes colour
+only. Shape stays xlatch's identity (radius dial 8). Any file with `"themes"` and
+`"schema": 1` is accepted the same way, e.g. `--theme /path/to/house.rune.json`.
 
 ## Base16 and Base24
 

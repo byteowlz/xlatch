@@ -252,6 +252,18 @@ final class OutboxTests: XCTestCase {
         XCTAssertEqual(ShareActionPreferences.ordered([first, second], deviceID: otherDevice).map(\.id), [first.id, second.id])
         XCTAssertNil(ShareActionPreferences.icon(for: second.id, deviceID: otherDevice))
     }
+    func testIconColorPersistsIndependentlyOfArtwork() throws {
+        let legacy = try JSONDecoder().decode(ActionIconOverride.self, from: Data(#"{"systemName":"waveform"}"#.utf8))
+        XCTAssertEqual(legacy, .system("waveform"))
+        let (_, _, connection, item) = try fixture()
+        let tint = ActionIconTint(red: 0.2, green: 0.6, blue: 0.9)
+        let appearance = ActionIconOverride(tint: tint)
+        XCTAssertTrue(appearance.usesServerArtwork)
+        ShareActionPreferences.saveIcon(appearance, for: item.capability.id, deviceID: connection.deviceID)
+        defer { ShareActionPreferences.saveIcon(nil, for: item.capability.id, deviceID: connection.deviceID) }
+        XCTAssertEqual(ShareActionPreferences.icon(for: item.capability.id, deviceID: connection.deviceID), appearance)
+        XCTAssertEqual(try JSONDecoder().decode(ActionIconOverride.self, from: JSONEncoder().encode(appearance)), appearance)
+    }
     func testTLSAndPermissionErrorsPauseButNetworkErrorsRetry() async throws {
         XCTAssertTrue(ClientError.isRetryable(URLError(.notConnectedToInternet)))
         XCTAssertTrue(ClientError.isRetryable(URLError(.networkConnectionLost)))

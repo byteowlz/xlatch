@@ -146,6 +146,12 @@ final class ShareViewController: UIViewController {
         guard sending == nil, chain.isEmpty else { return }
         selectingGroup = true; selectedGroupIDs = []; error = nil; savedMessage = nil
     }
+    func swipeSelect(_ target: ShareTarget) {
+        guard sending == nil, !findingSteps, chain.isEmpty, Self.isLeaf(target.capability),
+              choices.contains(where: { $0.id == target.id }) else { return }
+        if !selectingGroup { beginGroupSelection() }
+        toggleGroupTarget(target)
+    }
     func cancelGroupSelection() {
         selectingGroup = false; selectedGroupIDs = []
     }
@@ -189,7 +195,7 @@ final class ShareViewController: UIViewController {
     }
     func sendGroup() async {
         let targets = selectedGroup
-        guard targets.count >= 2, sending == nil, !contents.isEmpty else { return }
+        guard !targets.isEmpty, sending == nil, !contents.isEmpty else { return }
         sending = "send-group"; error = nil
         defer { sending = nil; uploadingID = nil; batchPosition = nil }
         await sendBatch(targets: targets)
@@ -307,6 +313,9 @@ final class ShareViewController: UIViewController {
 struct ShareView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var model: ShareModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage("share-target-layout", store: UserDefaults(suiteName: "group.com.byteowlz.xlatch")) private var targetLayout = "list"
+    @State private var targetQuery = ""
     @State private var namingChain = false
     @State private var chainName = ""
     @State private var namingGroup = false
@@ -318,6 +327,18 @@ struct ShareView: View {
                 else { actionList }
             }
             .navigationTitle("xlatch").navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !model.sent {
+                    ShareTargetSearchBar(query: $targetQuery, layout: $targetLayout, busy: activityVisible)
+                }
+            }
+            .onChange(of: model.chain.count) { _, _ in targetQuery = "" }
+            .overlay(alignment: .bottom) {
+                if !model.sent {
+                    if activityVisible { ShareActivityStatus(model: model) }
+                    else if model.selectingGroup { selectionBar }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { model.done() }.disabled(model.sending != nil)
@@ -342,9 +363,11 @@ struct ShareView: View {
             Button("Submit for approval") { Task { await model.saveGroup(title: groupName) } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("Every share will be sent independently to all selected targets. The new target needs approval before it becomes available.") }
-        .tint(colorScheme == .dark
-            ? Color(red: 0.38, green: 0.85, blue: 0.68)
-            : Color(red: 0.12, green: 0.43, blue: 0.34))
+        .tint(actionTint)
+    }
+    private var activityVisible: Bool { model.loading || model.findingSteps || model.sending != nil }
+    private var actionTint: Color {
+        colorScheme == .dark ? Color(red: 0.38, green: 0.85, blue: 0.68) : Color(red: 0.12, green: 0.43, blue: 0.34)
     }
     private var confirmation: some View {
         VStack(spacing: 20) {
@@ -373,21 +396,24 @@ struct ShareView: View {
     }
     private var actionList: some View {
         List {
-            if let input = model.content { Section("Sharing") {
-                if model.contents.count > 1 { Text("\(model.contents.count) items").font(.headline) }
-                Text(input.label).lineLimit(3)
-                ForEach(Array(model.extraInputs.enumerated()), id: \.offset) { _, item in Text(item.label).lineLimit(2) }
-            } }
-            if model.content != nil {
-                Section("Add text") {
-                    TextField("Optional note or instructions", text: $model.additionalText, axis: .vertical)
+            if let input = model.content {
+                Section("Sharing") {
+                    if targetQuery.isEmpty {
+                        if model.contents.count > 1 {
+                            DisclosureGroup("\(model.contents.count) items") {
+                                ForEach(Array(model.contents.enumerated()), id: \.offset) { _, item in Text(item.label).font(.subheadline).lineLimit(2) }
+                            }
+                        } else { Text(input.label).font(.subheadline).lineLimit(2) }
+                    }
+                    TextField("Add a note or instructions…", text: $model.additionalText, axis: .vertical)
                         .lineLimit(1...4)
                         .multilineTextAlignment(.leading)
                         .foregroundStyle(.primary)
                         .accessibilityLabel("Additional text")
+                        .accessibilityIdentifier("share-note-input")
                         .disabled(model.sending != nil || model.hasParkedItems)
                 }
-                Section {
+                if targetQuery.isEmpty { Section {
                     if model.connections.count > 1 {
                         Picker("Save for later on", selection: Binding(
                             get: { model.connection?.id ?? "" },
@@ -404,10 +430,9 @@ struct ShareView: View {
                         Label(model.sending == "park" ? "Saving…" : "Save for later", systemImage: "bookmark")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }.disabled(model.sending != nil)
-                }
+                } }
             }
             if !model.chain.isEmpty { chainSection }
-            if model.selectingGroup { groupSection }
             if let message = model.savedMessage { Section { Text(message) } }
             if model.pageInput != nil {
                 Section {
@@ -425,10 +450,6 @@ struct ShareView: View {
                     } }
                 }
             }
-            if model.loading || model.findingSteps { ProgressView("Finding compatible actions…") }
-            if let position = model.batchPosition { Section { Text(position); ProgressView() } }
-            if let progress = model.parkProgress { Section { UploadProgressBar(progress: progress) } }
-            else if let id = model.uploadingID { Section { LiveUploadProgress(id: id) } }
             if model.content != nil { targets }
             ForEach(model.connections.filter { model.serverErrors[$0.id] != nil }, id: \.id) { server in
                 Section {
@@ -440,30 +461,44 @@ struct ShareView: View {
                 }
             }
         }
+        .listSectionSpacing(.compact)
+        // Reserve dock clearance from the start; showing it must never resize the list.
+        .contentMargins(.bottom, dynamicTypeSize.isAccessibilitySize ? 180 : 112, for: .scrollContent)
+        .scrollDismissesKeyboard(.interactively)
     }
-    private var groupSection: some View {
-        Section {
-            if model.selectedGroup.isEmpty {
-                Text("Choose at least two targets below.").foregroundStyle(.secondary)
-            } else {
-                Text(model.selectedGroup.map { $0.capability.manifest.title }.joined(separator: " + "))
-                    .font(.subheadline).foregroundStyle(.secondary)
+    private var selectionBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(model.selectedGroup.isEmpty ? "Select a target to send" : (model.canSaveGroup ? "Ready to send" : "Sending across servers"))
+                .font(.footnote).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Button { Task { await model.sendGroup() } } label: {
+                    HStack(spacing: 8) {
+                        if model.sending == "send-group" { ProgressView().tint(Color(uiColor: .systemBackground)) }
+                        else { Image(systemName: "paperplane.fill") }
+                        Text(model.sending == "send-group" ? "Sending…" : (model.selectedGroup.count == 1 ? "Send to 1 target" : "Send to \(model.selectedGroup.count) targets"))
+                    }.frame(maxWidth: .infinity, minHeight: 50)
+                        .foregroundStyle(!model.selectedGroup.isEmpty ? Color(uiColor: .systemBackground) : Color(uiColor: .label))
+                        .background(!model.selectedGroup.isEmpty ? actionTint : Color(uiColor: .secondarySystemFill), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("share-multi-send")
+                .disabled(model.selectedGroup.isEmpty || model.sending != nil)
+                Menu {
+                    Button(model.canSaveGroup ? "Save selection as target…" : "Save as target requires one server", systemImage: "square.and.arrow.down") {
+                        groupName = model.selectedGroup.map { $0.capability.manifest.title }.joined(separator: " + ")
+                        namingGroup = true
+                    }.disabled(model.selectedGroup.count < 2 || !model.canSaveGroup)
+                    Button("Cancel selection", systemImage: "xmark") { model.cancelGroupSelection() }
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.title2).frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("Selection options")
+                .disabled(model.sending != nil)
             }
-            Button {
-                Task { await model.sendGroup() }
-            } label: {
-                Label(model.sending == "send-group" ? "Sending…" : "Send to \(model.selectedGroup.count)", systemImage: "paperplane.fill")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .disabled(model.selectedGroup.count < 2 || model.sending != nil)
-            Button("Save selection as target…", systemImage: "square.and.arrow.down") {
-                groupName = model.selectedGroup.map { $0.capability.manifest.title }.joined(separator: " + ")
-                namingGroup = true
-            }
-            .disabled(model.selectedGroup.count < 2 || !model.canSaveGroup || model.sending != nil)
-            if !model.canSaveGroup && model.selectedGroup.count >= 2 { Text("Sending across servers is supported. Saved server groups must use targets on one server.").font(.footnote).foregroundStyle(.secondary) }
-        } header: { Text("Multiple targets") }
-        footer: { Text("Each target receives the original item. Use a chain when one action should consume another action’s result.") }
+        }
+        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 12)
+        .frame(minHeight: 96)
+        .background(.regularMaterial)
     }
     private var chainSection: some View {
         Section {
@@ -482,28 +517,52 @@ struct ShareView: View {
                 }.disabled(model.sending != nil)
             }
         } header: { Text("Your chain") }
-        footer: { Text("Tap the next target to send. Swipe left to add another step.") }
+        footer: { Text("Tap the next target to send. Swipe right to add another step.") }
     }
     @ViewBuilder private var targets: some View {
-        if model.choices.isEmpty && !model.loading && !model.findingSteps {
+        let choices = model.choices
+        let matches = ShareTargetSearch.filter(choices, query: targetQuery)
+        if choices.isEmpty && !model.loading && !model.findingSteps {
             ContentUnavailableView("No compatible actions", systemImage: "bolt.slash",
                 description: Text(model.chain.isEmpty ? "Enable or grant an action that accepts this content." : "No granted targets accept this output. Undo the last step or clear the chain."))
         }
         Section {
-            ForEach(model.choices) { target in
-                ShareTargetRow(model: model, target: target)
+            if !choices.isEmpty && matches.isEmpty {
+                ContentUnavailableView.search(text: targetQuery)
+                Button("Clear search") { targetQuery = "" }
+            } else if targetLayout == "tiles" {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: dynamicTypeSize.isAccessibilitySize ? 1 : 2), spacing: 8) {
+                    ForEach(matches) { target in
+                        ShareTargetRow(model: model, target: target, tiled: true)
+                            .containerShape(RoundedRectangle(cornerRadius: 14))
+                            .id(target.id)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                .listRowBackground(Color.clear).listRowSeparator(.hidden)
+            } else {
+                ForEach(matches) { target in
+                    ShareTargetRow(model: model, target: target)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                }
             }
         } header: { Text(model.selectingGroup ? "Select targets" : (model.chain.isEmpty ? "Choose an action" : "Send to next target")) }
         footer: {
             if model.selectingGroup { Text("Tap targets to select them. The normal one-tap send returns when you cancel selection.") }
-            else if model.chain.isEmpty { Text("Tap to send. Select multiple sends the original item to several targets; Add step builds a chain.") }
+            else if model.chain.isEmpty { Text("Tap to send. Swipe left to select multiple targets; swipe right to build a chain.") }
         }
     }
 }
 
 private struct ShareTargetRow: View {
     @ObservedObject var model: ShareModel
+    @State private var suppressTapUntil = Date.distantPast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @GestureState private var dragging = false
+    @State private var slideOffset: CGFloat = 0
+    @State private var removingFromSelection = false
     let target: ShareTarget
+    var tiled = false
     private var capability: Capability { target.capability }
     private var canExtend: Bool {
         guard let kind = capability.manifest.execution?.kind else { return false }
@@ -512,39 +571,222 @@ private struct ShareTargetRow: View {
     var body: some View {
         HStack {
             Button {
+                guard Date() >= suppressTapUntil else { return }
                 if model.selectingGroup { model.toggleGroupTarget(target) }
                 else { Task { await model.send(target) } }
             } label: {
-                HStack {
-                    CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id, server: target.connection))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(capability.manifest.title).font(.headline).foregroundStyle(Color(uiColor: .label))
-                        if model.connections.count > 1 && ServerPresentation.showsAlias(for: target.connection) {
-                            Text(ServerPresentation.label(for: target.connection)).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }.multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-                    if model.selectingGroup {
-                        Image(systemName: model.selectedGroupIDs.contains(target.id) ? "checkmark.circle.fill" : "circle")
-                            .font(.title3).foregroundStyle(model.selectedGroupIDs.contains(target.id) ? Color.accentColor : Color.secondary)
-                    } else if model.sending == target.id { ProgressView() }
-                    else { Image(systemName: "arrow.up.right").foregroundStyle(.tint) }
+                Group {
+                    if tiled {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                targetIcon(size: 28)
+                                Spacer(minLength: 8)
+                                status
+                            }
+                            title
+                        }.frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+                    } else {
+                        HStack(spacing: 12) {
+                            targetIcon(size: 24)
+                            title.frame(maxWidth: .infinity, alignment: .leading)
+                            status
+                        }.frame(minHeight: 44)
+                    }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
-            if canExtend && !model.selectingGroup {
-                Menu {
-                    Button("Add step", systemImage: "link") { Task { await model.addStep(target) } }
-                } label: { Image(systemName: "ellipsis.circle").frame(minWidth: 44, minHeight: 44) }
+            if canExtend && !model.selectingGroup && !tiled {
+                Menu { options } label: { Image(systemName: "ellipsis.circle").frame(minWidth: 44, minHeight: 44) }
                 .accessibilityLabel("Options for " + capability.manifest.title)
             }
-        }.padding(.vertical, 6)
-        .disabled(model.sending != nil || model.findingSteps)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if canExtend && !model.selectingGroup {
-                Button { Task { await model.addStep(target) } } label: {
-                    Label("Add step", systemImage: "link")
-                }.tint(.teal)
+        }
+        .overlay(alignment: .topTrailing) {
+            if tiled && canExtend && !model.selectingGroup {
+                Menu { options } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Options for " + capability.manifest.title)
             }
         }
+        .padding(tiled ? EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12) : EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 8))
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: ContainerRelativeShape())
+        .clipShape(ContainerRelativeShape())
+        .offset(x: slideOffset)
+        .background(alignment: slideOffset < 0 ? .trailing : .leading) {
+            if slideOffset != 0 {
+                ShareSwipeHint(selecting: slideOffset < 0, removing: removingFromSelection)
+                    .frame(width: 56)
+                    .frame(width: abs(slideOffset), alignment: slideOffset < 0 ? .trailing : .leading)
+                    .background(Color.accentColor.opacity(0.12))
+                    .clipped()
+            }
+        }
+        .clipShape(ContainerRelativeShape())
+        .contentShape(ContainerRelativeShape())
+        .disabled(model.sending != nil || model.findingSteps)
+        .onChange(of: dragging) { _, active in
+            // Also recover when the scroll view cancels a drag.
+            if !active { returnToRest() }
+        }
+        .simultaneousGesture(swipeGesture)
+        .accessibilityAction(named: "Select for multiple targets") { model.swipeSelect(target) }
         .accessibilityAction(named: "Add step") { if canExtend && !model.selectingGroup { Task { await model.addStep(target) } } }
+    }
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+        .updating($dragging) { _, active, _ in active = true }
+        .onChanged { value in
+            // A simultaneous drag must not also deliver the Button's release tap.
+            suppressTapUntil = Date().addingTimeInterval(0.15)
+            removingFromSelection = model.selectedGroupIDs.contains(target.id)
+            let distance = value.translation.width
+            guard canExtend, model.sending == nil, !model.findingSteps,
+                  abs(distance) > abs(value.translation.height) * 1.5,
+                  distance < 0 ? model.chain.isEmpty : !model.selectingGroup else {
+                slideOffset = 0
+                return
+            }
+            // Follow the finger, with rubber-band resistance beyond the commit distance.
+            let travel = min(abs(distance), 44) + 28 * (1 - exp(-max(0, abs(distance) - 44) / 70))
+            slideOffset = reduceMotion ? 0 : (distance < 0 ? -travel : travel)
+        }.onEnded { value in
+            returnToRest()
+            suppressTapUntil = Date().addingTimeInterval(0.15)
+            guard canExtend, model.sending == nil, !model.findingSteps,
+                  let action = ShareTargetSwipe.action(for: value.translation) else { return }
+            switch action {
+            case .select:
+                guard model.chain.isEmpty else { return }
+                model.swipeSelect(target)
+                UISelectionFeedbackGenerator().selectionChanged()
+            case .chain:
+                guard !model.selectingGroup else { return }
+                Task { await model.addStep(target) }
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        }
+    }
+    @ViewBuilder private var options: some View {
+        if model.chain.isEmpty {
+            Button("Select multiple", systemImage: "checkmark.circle") { model.swipeSelect(target) }
+        }
+        Button("Add step", systemImage: "link") { Task { await model.addStep(target) } }
+    }
+    private func targetIcon(size: CGFloat) -> some View {
+        CapabilityIcon(icon: capability.manifest.icon, override: model.iconOverride(for: capability.id, server: target.connection), size: size)
+    }
+    private var title: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(capability.manifest.title).font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color(uiColor: .label)).fixedSize(horizontal: false, vertical: true)
+            if model.connections.count > 1 && ServerPresentation.showsAlias(for: target.connection) {
+                Text(ServerPresentation.label(for: target.connection)).font(.caption).foregroundStyle(.secondary)
+            }
+        }.multilineTextAlignment(.leading)
+    }
+    private var status: some View {
+        Group {
+            if model.selectingGroup {
+                Image(systemName: model.selectedGroupIDs.contains(target.id) ? "checkmark.circle.fill" : "circle")
+                    .font(.title3).foregroundStyle(model.selectedGroupIDs.contains(target.id) ? Color.accentColor : Color.secondary)
+            } else if model.sending == target.id { ProgressView() }
+        }.frame(width: 24, height: 24)
+    }
+    private func returnToRest() {
+        guard slideOffset != 0 else { return }
+        withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.62)) {
+            slideOffset = 0
+        }
+    }
+}
+
+private struct ShareTargetSearchBar: View {
+    @Binding var query: String
+    @Binding var layout: String
+    var busy = false
+    @FocusState private var focused: Bool
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Find a target", text: $query)
+                    .focused($focused).onSubmit { focused = false }
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .submitLabel(.search).accessibilityIdentifier("share-target-search")
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 44, height: 44)
+                    }.accessibilityLabel("Clear target search")
+                }
+            }
+            .padding(.leading, 12).frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+            Button { layout = layout == "tiles" ? "list" : "tiles" } label: {
+                Image(systemName: layout == "tiles" ? "list.bullet" : "square.grid.2x2")
+                    .font(.body.weight(.medium)).frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(layout == "tiles" ? "Show compact list" : "Show tiles")
+            .accessibilityIdentifier("share-target-layout")
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(Color(uiColor: .systemGroupedBackground))
+        .onChange(of: busy) { _, active in if active { focused = false } }
+    }
+}
+
+private struct ShareActivityStatus: View {
+    @ObservedObject var model: ShareModel
+    @State private var item: OutboxItem?
+    private var progress: UploadProgress? { model.parkProgress ?? item?.upload }
+    private var label: String {
+        model.batchPosition ?? item?.statusLabel ?? (model.loading || model.findingSteps ? "Finding compatible actions…" : model.sending == "park" ? "Saving for later…" : "Preparing share…")
+    }
+    private var detail: String? {
+        if let progress { return progress.bytesLabel }
+        return model.batchPosition != nil ? item?.statusLabel : nil
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                ProgressView().frame(width: 24, height: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label).font(.subheadline).lineLimit(1)
+                        .accessibilityIdentifier("share-activity-label")
+                    if let detail { Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer(minLength: 0)
+            }
+            ProgressView(value: progress?.fraction ?? 0).progressViewStyle(.linear)
+                .opacity(progress?.fraction == nil ? 0 : 1)
+                .accessibilityHidden(progress?.fraction == nil)
+                .accessibilityLabel("Upload progress")
+        }
+        .padding(.horizontal, 20).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
+        .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("share-activity-status")
+        .task(id: model.uploadingID) {
+            item = nil
+            guard let id = model.uploadingID else { return }
+            while !Task.isCancelled {
+                item = try? OutboxStore().items().first(where: { $0.id == id })
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { break }
+            }
+        }
+    }
+}
+
+private struct ShareSwipeHint: View {
+    let selecting: Bool
+    let removing: Bool
+    var body: some View {
+        VStack(spacing: 2) {
+            Image(systemName: selecting ? (removing ? "minus.circle" : "checkmark.circle") : "link")
+                .font(.body.weight(.semibold)).foregroundStyle(.tint)
+            Text(selecting ? (removing ? "Remove" : "Multi") : "Chain")
+                .font(.caption2.weight(.semibold)).foregroundStyle(.primary)
+                .fixedSize()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 }

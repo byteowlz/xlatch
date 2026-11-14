@@ -7,6 +7,10 @@ members = [
     "crates/xlatch-tui",
     "crates/xlatch-mcp",
     "crates/xlatch-desktop",
+    "crates/xlatch-client",
+    "crates/xlatch-window-controls",
+    "crates/xlatch-sessions",
+    "crates/xlatch-island",
     "crates/byteowlz-tui-kit",
 ]
 
@@ -22,10 +26,15 @@ categories = ["command-line-utilities"]
 [workspace.dependencies]
 resvg = { version = "=0.46.0", default-features = false }
 tempfile = "3"
-gpui-kit = "=0.6.1"
+rune = { git = "https://github.com/anomalyco/rune", rev = "de2b16de8d165955bd387e67d353198e49957bbf", default-features = false, features = ["accessibility", "embedded-fonts", "metal-backend"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSWindow", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSImage", "NSResponder", "NSView", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString"] }
 tray-icon = "0.24"
 image = { version = "0.25", default-features = false, features = ["png"] }
 time = "=0.3.46"
+getrandom = "0.4"
+x509-parser = "0.18"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 # Shared across workspace
 anyhow = "1.0"
@@ -82,6 +91,8 @@ schemars = "1.2"
 
 # Internal crates
 xlatch-core = { path = "crates/xlatch-core" }
+xlatch-client = { path = "crates/xlatch-client" }
+xlatch-window-controls = { path = "crates/xlatch-window-controls" }
 xlatch-wire-auth = { path = "crates/xlatch-wire-auth" }
 byteowlz-tui-kit = { path = "crates/byteowlz-tui-kit" }
 

@@ -1,100 +1,126 @@
-//! Native projection of byteowlz palette roles, plus automatic file reloads.
+//! Incumbent palette resolution projected into Rune's linear color roles.
 use anyhow::{Context as _, Result};
-use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
-use gpui_kit::{App, Global};
-use serde_json::{Value, json};
+use rune::Color;
 use std::path::PathBuf;
-use xlatch_desktop::palette::{Palette, candidates, mix, on_color};
+use xlatch_desktop::palette::{Palette, candidates};
 
-#[derive(Clone)]
 pub struct Appearance {
     pub choice: String,
     pub status: String,
     applied: Option<Palette>,
 }
-impl Global for Appearance {}
 
-pub fn init(choice: String, cx: &mut App) {
-    let initial = resolve(
-        if ThemeMode::from(cx.window_appearance()).is_dark() {
-            "dark"
-        } else {
-            "light"
-        },
-        false,
-    )
-    .ok()
-    .map(|(palette, _)| palette);
-    if let Some(palette) = &initial
-        && let Err(error) = apply(palette, cx)
-    {
-        log::error!("Default theme: {error:#}");
-    }
-    cx.set_global(Appearance {
-        choice,
-        status: "Loading appearance…".into(),
-        applied: initial,
-    });
-    cx.spawn(async move |cx| {
-        loop {
-            let input = cx.update(|cx| {
-                (
-                    cx.global::<Appearance>().choice.clone(),
-                    ThemeMode::from(cx.window_appearance()).is_dark(),
-                )
-            });
-            let (choice, dark) = input;
-            let expected_choice = choice.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move { resolve(&choice, dark) })
-                .await;
-            cx.update(|cx| {
-                if cx.global::<Appearance>().choice != expected_choice {
-                    return;
-                }
-                update(result, cx);
-            });
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(2))
-                .await;
+impl Appearance {
+    pub fn new(choice: String) -> Self {
+        Self {
+            choice,
+            status: "Loading appearance…".into(),
+            applied: None,
         }
-    })
-    .detach();
-}
+    }
 
-fn update(result: Result<(Palette, String)>, cx: &mut App) {
-    let previous_status = cx.global::<Appearance>().status.clone();
-    match result {
-        Ok((palette, source)) => {
-            if cx.global::<Appearance>().applied.as_ref() != Some(&palette)
-                || Theme::global(cx).background
-                    != gpui_kit::Hsla::from(gpui_kit::rgb(palette.slots[0]))
-            {
-                if let Err(error) = apply(&palette, cx) {
-                    cx.global_mut::<Appearance>().status = format!("Theme not applied: {error:#}");
-                    return;
-                }
-                cx.global_mut::<Appearance>().applied = Some(palette.clone());
+    pub fn update(&mut self, result: Result<(Palette, String)>) {
+        match result {
+            Ok((palette, source)) => {
+                self.status = format!("{} · {source}", palette.name);
+                self.applied = Some(palette);
             }
-            cx.global_mut::<Appearance>().status = format!("{} · {source}", palette.name);
-        }
-        Err(error) => {
-            cx.global_mut::<Appearance>().status = format!("Keeping previous theme: {error:#}");
+            Err(error) => self.status = format!("Keeping previous theme: {error:#}"),
         }
     }
-    if cx.global::<Appearance>().status != previous_status {
-        cx.refresh_windows();
+
+    pub fn paint(&self, system_dark: bool) -> Result<Paint> {
+        let palette = match &self.applied {
+            Some(palette) => palette.clone(),
+            None => builtin(house_choice(&self.choice) || (self.choice == "auto" && system_dark))?,
+        };
+        Ok(Paint::new(&palette))
     }
 }
 
-pub fn select(choice: &str, cx: &mut App) {
-    cx.global_mut::<Appearance>().choice = choice.into();
-    cx.refresh_windows();
+/// All normal UI colors/radii come from the incumbent semantic mapping.
+#[derive(Clone, Copy)]
+pub struct Paint {
+    pub bg: Color,
+    pub sidebar: Color,
+    pub line: Color,
+    pub control: Color,
+    pub hover: Color,
+    pub fg: Color,
+    pub muted: Color,
+    pub primary: Color,
+    pub danger: Color,
+    pub warning: Color,
+    pub info: Color,
+    pub radius: f32,
+    pub dark: bool,
 }
 
-fn resolve(choice: &str, system_dark: bool) -> Result<(Palette, String)> {
-    if !matches!(choice, "auto" | "light" | "dark") {
+impl Paint {
+    fn new(palette: &Palette) -> Self {
+        let s = palette.slots;
+        Self {
+            bg: color(s[0]),
+            sidebar: color(s[17]),
+            line: color(s[1]),
+            control: color(s[1]),
+            hover: color(s[2]),
+            fg: color(s[5]),
+            muted: color(s[4]),
+            primary: color(s[11]),
+            danger: color(s[8]),
+            warning: color(s[10]),
+            info: color(s[13]),
+            radius: f32::from(palette.radius) / 2.,
+            dark: palette.dark,
+        }
+    }
+
+    pub fn status(self, status: &str) -> Color {
+        match status {
+            "succeeded" => self.primary,
+            "failed" => self.danger,
+            "running" => self.warning,
+            "queued" => self.info,
+            _ => self.muted,
+        }
+    }
+}
+
+pub fn color(rgb: u32) -> Color {
+    let channel = |shift: u32| {
+        let value = ((rgb >> shift) & 255_u32) as f32 / 255.;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    Color {
+        r: channel(16),
+        g: channel(8),
+        b: channel(0),
+        a: 1.,
+    }
+}
+
+/// `house` (the default) and its `dark` alias select byteowlz 2 House.
+fn house_choice(choice: &str) -> bool {
+    matches!(choice, "house" | "dark")
+}
+
+/// The bundled scheme: House for dark, xlatch's light palette until House ships
+/// a light scheme.
+pub fn builtin(dark: bool) -> Result<Palette> {
+    if dark {
+        Palette::house()
+    } else {
+        Palette::parse(include_str!("../themes/light.json"), true)
+    }
+}
+
+pub fn resolve(choice: &str, system_dark: bool) -> Result<(Palette, String)> {
+    if !matches!(choice, "auto" | "light" | "dark" | "house") {
         return Ok((Palette::load(std::path::Path::new(choice))?, choice.into()));
     }
     if choice == "auto" {
@@ -116,14 +142,8 @@ fn resolve(choice: &str, system_dark: bool) -> Result<(Palette, String)> {
             }
         }
     }
-    let dark = choice == "dark" || (choice == "auto" && system_dark);
-    let body = if dark {
-        include_str!("../themes/dark.json")
-    } else {
-        include_str!("../themes/light.json")
-    };
     Ok((
-        Palette::parse(body, true)?,
+        builtin(house_choice(choice) || (choice == "auto" && system_dark))?,
         if choice == "auto" {
             "system appearance".into()
         } else {
@@ -132,87 +152,25 @@ fn resolve(choice: &str, system_dark: bool) -> Result<(Palette, String)> {
     ))
 }
 
-fn theme_document(palette: &Palette) -> Value {
-    let s = &palette.slots;
-    let mut colors = serde_json::Map::new();
-    for (keys, index) in [
-        (
-            "background,title_bar.background,tab_bar.background,list.background,table.background",
-            0,
-        ),
-        (
-            "border,input.border,popover.background,accordion.background,group_box.background,window.border,sidebar.border,title_bar.border,table.row_border,tab.border",
-            1,
-        ),
-        (
-            "secondary.hover.background,secondary.active.background,secondary.background,accent.background,muted.background,list.active.background,list.hover.background,tab.active.background,selection.background,button.hover.background,button.active.background,sidebar.accent.background",
-            2,
-        ),
-        (
-            "muted.foreground,scrollbar.thumb.background,scrollbar.thumb.hover.background",
-            4,
-        ),
-        (
-            "foreground,caret,accent.foreground,secondary.foreground,popover.foreground,sidebar.foreground,sidebar.accent.foreground,tab.foreground,tab.active.foreground,button.foreground",
-            5,
-        ),
-        ("primary.background,ring,sidebar.primary.background", 11),
-        ("sidebar.background", 17),
-        ("button.background", 1),
-    ] {
-        for key in keys.split(',') {
-            colors.insert(key.into(), json!(format!("#{:06x}", s[index])));
-        }
-    }
-    for (role, index, bright) in [
-        ("primary", 11, 20),
-        ("success", 11, 20),
-        ("danger", 8, 18),
-        ("warning", 10, 19),
-        ("info", 13, 22),
-    ] {
-        for (suffix, color) in [
-            ("background", s[index]),
-            ("foreground", on_color(s[index])),
-            ("hover.background", mix(s[index], s[5], 8)),
-            ("active.background", s[bright]),
-        ] {
-            colors.insert(format!("{role}.{suffix}"), json!(format!("#{color:06x}")));
-        }
-    }
-    json!({"name":"xlatch","themes":[{"name":"xlatch current","mode":if palette.dark {"dark"} else {"light"},"radius":palette.radius / 2,"radius.lg":palette.radius,"font.size":14,"shadow":false,"colors":colors}]})
-}
-
-fn apply(palette: &Palette, cx: &mut App) -> Result<()> {
-    ThemeRegistry::global_mut(cx).load_themes_from_str(&theme_document(palette).to_string())?;
-    let config = ThemeRegistry::global(cx)
-        .themes()
-        .get("xlatch current")
-        .cloned()
-        .context("Theme registration failed")?;
-    let mode = config.mode;
-    let theme = Theme::global_mut(cx);
-    if mode.is_dark() {
-        theme.dark_theme = config;
-    } else {
-        theme.light_theme = config;
-    }
-    Theme::change(mode, None, cx);
-    cx.refresh_windows();
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn native_theme_schema_keeps_palette_roles_and_radius() -> Result<()> {
-        let palette = Palette::parse(include_str!("../themes/dark.json"), true)?;
-        let set: gpui_kit::component::ThemeSet = serde_json::from_value(theme_document(&palette))?;
-        let theme = set.themes.first().context("theme")?;
-        anyhow::ensure!(theme.colors.sidebar.as_deref() == Some("#0e1310"));
-        anyhow::ensure!(theme.colors.primary.as_deref() == Some("#77bd9d"));
-        anyhow::ensure!(theme.radius == Some(4) && theme.radius_lg == Some(8));
+    fn rune_projection_preserves_roles_radius_and_last_valid_palette() -> Result<()> {
+        let palette = builtin(true)?;
+        let paint = Paint::new(&palette);
+        anyhow::ensure!(paint.sidebar == color(0x0014_1416) && paint.primary == color(0x0032_d74b));
+        anyhow::ensure!(paint.radius.to_bits() == 4_f32.to_bits());
+        let mut appearance = Appearance::new("dark".into());
+        appearance.update(Ok((palette, "fixture".into())));
+        appearance.update(Err(anyhow::anyhow!("malformed fixture")));
+        anyhow::ensure!(appearance.paint(false)?.primary == paint.primary);
+        anyhow::ensure!(appearance.status.contains("Keeping previous theme"));
+        let light = Appearance::new("auto".into()).paint(false)?;
+        anyhow::ensure!(!light.dark && paint.dark);
+        let house = Appearance::new("house".into()).paint(false)?;
+        anyhow::ensure!(house.dark && house.bg == color(0) && house.primary == paint.primary);
         Ok(())
     }
 }

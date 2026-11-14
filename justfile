@@ -180,6 +180,19 @@ setup-secrets:
 install-iphone device="":
     python3 scripts/install-iphone.py {{quote(device)}}
 
+# Run the paired desktop CLI; no local daemon or GUI is required.
+client *args:
+    cargo run --locked -p xlatch-client -- {{args}}
+
+# Prove the optional client contract with isolated pinned HTTPS fixtures.
+client-check:
+    cargo check -p xlatch-client -p xlatch-desktop
+    cargo clippy -p xlatch-client --all-targets -- -D warnings
+    cargo test -p xlatch-client -p xlatch-desktop
+
+# Agent-visible operations use the same paired substrate as the desktop app.
+agent-check: client-check
+
 # Open the optional native management window (daemon runs independently).
 desktop *args:
     cargo run --locked -p xlatch-desktop --features desktop -- {{args}}
@@ -187,6 +200,27 @@ desktop *args:
 # Open the management window with its optional native tray.
 desktop-tray *args:
     cargo run --locked -p xlatch-desktop --features tray -- --tray {{args}}
+
+# Verify the shared backend, Rune input model and tray-enabled desktop build.
+desktop-check:
+    cargo check --locked -p xlatch-desktop --features desktop
+    cargo test --locked -p xlatch-desktop --features tray
+    cargo clippy --locked -p xlatch-desktop --all-targets --features tray -- -D warnings
+
+# Render synthetic fixtures only; pixels/semantic trees are not native AX proof.
+desktop-render SCENE="actions" THEME="dark" SIZE="1100x760":
+    mkdir -p target/desktop-review
+    cargo run --locked -p xlatch-desktop --features desktop -- --fixture --theme {{quote(THEME)}} -- --scene {{quote(SCENE)}} --size {{quote(SIZE)}} --snap {{quote("target/desktop-review/" + SCENE + "-" + THEME + "-" + SIZE + ".png")}} --tree {{quote("target/desktop-review/" + SCENE + "-" + THEME + "-" + SIZE + ".json")}}
+
+# Write session-bridge manifests bound to the built adapter (ADR 0008). Pass HERDR="" to omit herdr.
+sessions-manifests HC HERDR OUT="target/sessions-manifests":
+    cargo build --locked --release -p xlatch-sessions
+    target/release/xlatch-sessions --hc {{quote(HC)}} {{ if HERDR != "" { "--herdr " + quote(HERDR) } else { "" } }} manifests --out {{quote(OUT)}}
+
+# Copy Design Studio's generated House theme byte-for-byte (never hand-edit it).
+sync-house-theme CONSUMER="xlatch-desktop":
+    cp {{quote("../design-studio/generated/" + CONSUMER + "/house.rune.json")}} crates/xlatch-desktop/themes/house.rune.json
+    shasum -a 256 crates/xlatch-desktop/themes/house.rune.json
 
 # Build a local, ad-hoc signed macOS bundle with the xlatch icon.
 desktop-bundle:

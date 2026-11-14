@@ -7,14 +7,14 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Optional native GPUI management client for xlatch"
+description = "Optional native Rune management client for xlatch"
 
 [lints]
 workspace = true
 
 [features]
 default = []
-desktop = ["dep:gpui-kit"]
+desktop = ["dep:rune", "dep:xlatch-window-controls"]
 tray = ["desktop", "dep:tray-icon", "dep:image"]
 
 [[bin]]
@@ -24,6 +24,7 @@ required-features = ["desktop"]
 
 [dependencies]
 xlatch-core = { path = "../xlatch-core" }
+xlatch-client.workspace = true
 anyhow.workspace = true
 toml.workspace = true
 dirs.workspace = true
@@ -34,7 +35,8 @@ uuid.workspace = true
 clap.workspace = true
 log.workspace = true
 env_logger.workspace = true
-gpui-kit = { workspace = true, optional = true }
+rune = { workspace = true, optional = true }
+xlatch-window-controls = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tray-icon = { workspace = true, optional = true }

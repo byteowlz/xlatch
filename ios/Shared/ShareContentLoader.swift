@@ -54,10 +54,14 @@ enum ShareContentLoader {
     }
 
     private static func loadContent(_ provider: NSItemProvider) async throws -> ShareInput {
-        let contentType = provider.registeredTypeIdentifiers.first {
+        let fileTypes = provider.registeredTypeIdentifiers.filter {
             guard let type = UTType($0) else { return false }
             return type.conforms(to: .data) && !type.conforms(to: .url)
         }
+        // Photos may advertise a preview image or generic data before the movie.
+        let contentType = fileTypes.first { UTType($0)?.conforms(to: .movie) == true || UTType($0)?.conforms(to: .audio) == true }
+            ?? fileTypes.first { UTType($0)?.conforms(to: .image) == true }
+            ?? fileTypes.first
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier), let contentType {
             return try await loadFile(provider, typeID: contentType)
         }
@@ -84,7 +88,7 @@ enum ShareContentLoader {
             if let text = item as? String { return .text(text) }
             if let data = item as? Data, let text = String(data: data, encoding: .utf8) { return .text(text) }
         }
-        guard let typeID = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .data) == true }) else { throw ClientError.message("This content type is not supported yet.") }
+        guard let typeID = contentType else { throw ClientError.message("This content type is not supported yet.") }
         return try await loadFile(provider, typeID: typeID)
     }
 

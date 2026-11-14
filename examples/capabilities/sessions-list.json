@@ -1,0 +1,50 @@
+{
+  "id": "sessions.list",
+  "title": "List agent sessions",
+  "description": "List live coding-agent sessions held by hc (herdr-core) or the legacy herdr server on this machine and the machines they reach: address, agent, status, working directory and title. Reads no screen content. Session names and paths can reveal project details. Optional xlatch adapter (ADR 0008).",
+  "accepts": ["application/vnd.xlatch.sessions-query+json"],
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["sessions", "unavailable"],
+    "properties": {
+      "sessions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "provider", "address", "agent"],
+          "properties": {
+            "id": { "type": "string" },
+            "provider": { "enum": ["hc", "herdr"] },
+            "address": { "type": "string" },
+            "agent": { "type": "string" },
+            "status": { "type": ["string", "null"] },
+            "cwd": { "type": ["string", "null"] },
+            "title": { "type": ["string", "null"] }
+          }
+        }
+      },
+      "unavailable": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["provider", "error"],
+          "properties": {
+            "provider": { "type": "string" },
+            "error": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "execution": {
+    "kind": "command",
+    "program": "/ABSOLUTE/PATH/TO/xlatch-sessions",
+    "args": ["--hc", "/ABSOLUTE/PATH/TO/hc", "list"],
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "timeout_seconds": 20
+}

@@ -58,3 +58,72 @@ extension TransportTests {
         XCTAssertEqual(app as NSDictionary, shareATS as NSDictionary)
     }
 }
+
+private final class UploadRPCProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var requests = 0
+    private static var failNext = false
+    static func reset() { lock.withLock { requests = 0; failNext = false } }
+    static func failOneRequest() { lock.withLock { failNext = true } }
+    static var count: Int { lock.withLock { requests } }
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "upload-fixture.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock()
+        Self.requests += 1
+        let fail = Self.failNext; Self.failNext = false
+        Self.lock.unlock()
+        if fail { client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost)); return }
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(#"{"ok":true}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
+private actor UploadRouteCounter {
+    private(set) var count = 0
+    func resolve(_ connection: Connection) async throws -> ServerDiscovery.ServerRoute {
+        count += 1
+        return ServerDiscovery.ServerRoute(url: connection.url, addresses: [], keyPin: nil)
+    }
+}
+
+extension TransportTests {
+    func testChunkSequenceDiscoversRouteOnce() async throws {
+        UploadRPCProtocol.reset()
+        let routes = UploadRouteCounter()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UploadRPCProtocol.self]
+        let connection = Connection(url: "https://upload-fixture.invalid", pin: "fixture", deviceID: UUID().uuidString, privateKey: Curve25519.Signing.PrivateKey().rawRepresentation)
+        let client = try APIClient(connection: connection, configuration: configuration, routeResolver: { try await routes.resolve($0) })
+        for index in 0..<12 {
+            let response: [String: Bool] = try await client.rpc(["op": "upload", "request": ["action": "chunk", "offset": index * 1024 * 1024, "data_base64": String(repeating: "A", count: 1024 * 1024)]])
+            XCTAssertEqual(response, ["ok": true])
+        }
+        let resolutions = await routes.count
+        XCTAssertEqual(resolutions, 1, "Do not probe all server addresses and rewrite Keychain for each chunk")
+        XCTAssertEqual(UploadRPCProtocol.count, 12)
+    }
+    func testFailedRequestIsNotReplayedAndNextRequestRediscoversRoute() async throws {
+        UploadRPCProtocol.reset()
+        let routes = UploadRouteCounter()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [UploadRPCProtocol.self]
+        let connection = Connection(url: "https://upload-fixture.invalid", pin: "fixture", deviceID: UUID().uuidString, privateKey: Curve25519.Signing.PrivateKey().rawRepresentation)
+        let client = try APIClient(connection: connection, configuration: configuration, routeResolver: { try await routes.resolve($0) })
+        let _: [String: Bool] = try await client.rpc(["op": "upload"])
+        UploadRPCProtocol.failOneRequest()
+        do { let _: [String: Bool] = try await client.rpc(["op": "upload"]); XCTFail("Expected the network failure") }
+        catch { XCTAssertEqual((error as? URLError)?.code, .networkConnectionLost) }
+        XCTAssertEqual(UploadRPCProtocol.count, 2, "A failed signed POST must not be replayed automatically")
+        let _: [String: Bool] = try await client.rpc(["op": "upload"])
+        let resolutions = await routes.count
+        XCTAssertEqual(resolutions, 2)
+        XCTAssertEqual(UploadRPCProtocol.count, 3)
+    }
+}

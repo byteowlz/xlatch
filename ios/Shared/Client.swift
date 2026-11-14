@@ -197,18 +197,38 @@ final class APIClient {
     private(set) var connection: Connection
     private(set) var lastSuccessfulURL: String?
     let session: URLSession
-    init(connection: Connection) throws {
+    private let configuration: URLSessionConfiguration
+    private let routeResolver: (Connection) async throws -> ServerDiscovery.ServerRoute
+    private var verifiedRoute: ServerDiscovery.ServerRoute?
+    private let transportLock = NSLock()
+    private var transports: [String: URLSession] = [:]
+    init(connection: Connection, configuration: URLSessionConfiguration = .ephemeral,
+         routeResolver: @escaping (Connection) async throws -> ServerDiscovery.ServerRoute = { connection in
+             try await ServerDiscovery.reachableOrigin([connection.url] + (connection.urls ?? []), pin: connection.pin, keyPin: connection.keyPin)
+         }) throws {
         guard let url = URL(string: connection.url), url.scheme == "https", url.host != nil,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               ["", "/"].contains(url.path) else { throw ClientError.message("Invalid server address.") }
         self.connection = connection
-        let config = URLSessionConfiguration.ephemeral
+        guard let config = configuration.copy() as? URLSessionConfiguration else { throw ClientError.message("Could not configure HTTPS transport.") }
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 30
         config.httpShouldSetCookies = false
+        self.configuration = config
+        self.routeResolver = routeResolver
         self.session = URLSession(configuration: config, delegate: PinnedSession(origin: url, pin: connection.pin, keyPin: connection.keyPin), delegateQueue: nil)
     }
-    deinit { session.invalidateAndCancel() }
+    deinit {
+        session.invalidateAndCancel()
+        for transport in transports.values { transport.invalidateAndCancel() }
+    }
+    private func transport(for origin: URL) -> URLSession {
+        transportLock.lock(); defer { transportLock.unlock() }
+        if let transport = transports[origin.absoluteString] { return transport }
+        let transport = URLSession(configuration: configuration, delegate: PinnedSession(origin: origin, pin: connection.pin, keyPin: connection.keyPin), delegateQueue: nil)
+        transports[origin.absoluteString] = transport
+        return transport
+    }
     static func pair(_ ticket: PairingTicket, name: String) async throws -> Connection {
         try ticket.validate()
         let key = Curve25519.Signing.PrivateKey()
@@ -315,7 +335,21 @@ final class APIClient {
         return cache.capabilities
     }
     private func post<T: Decodable>(_ path: String, body: [String: Any], progress: ((Int64, Int64) -> Void)? = nil) async throws -> T {
-        let route = try await ServerDiscovery.reachableOrigin([connection.url] + (connection.urls ?? []), pin: connection.pin, keyPin: connection.keyPin)
+        let route = try await route()
+        do {
+            let response: T = try await send(path, body: body, origin: route.url, progress: progress)
+            lastSuccessfulURL = route.url
+            return response
+        } catch {
+            // Never replay a signed POST here. The next request can rediscover routes;
+            // durable Outbox retries retain their own invocation idempotency key.
+            verifiedRoute = nil
+            throw error
+        }
+    }
+    private func route() async throws -> ServerDiscovery.ServerRoute {
+        if let verifiedRoute { return verifiedRoute }
+        let route = try await routeResolver(connection)
         var selected = connection
         selected.urls = Array(Set([route.url] + (route.addresses.isEmpty ? (connection.urls ?? []) : route.addresses))).sorted()
         selected.keyPin = route.keyPin
@@ -325,11 +359,9 @@ final class APIClient {
             remembered.urls = selected.urls; remembered.keyPin = selected.keyPin
             try CredentialStore.save(remembered, makeActive: false)
         }
-        // Persist trusted metadata before submitting work: a Keychain error must not hide an accepted job.
-        // Route discovery retries health probes only. Outbox retries an invocation with its durable idempotency key.
-        let response: T = try await send(path, body: body, origin: route.url, progress: progress)
-        lastSuccessfulURL = route.url
-        return response
+        // Remember trust metadata once before submitting work, not once per file chunk.
+        verifiedRoute = route
+        return route
     }
     private func send<T: Decodable>(_ path: String, body: [String: Any], origin: String, progress: ((Int64, Int64) -> Void)?) async throws -> T {
         guard let base = URL(string: origin) else { throw ClientError.message("Invalid server address.") }
@@ -337,11 +369,11 @@ final class APIClient {
         request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         guard let size = request.httpBody?.count, size <= 8 * 1024 * 1024 else { throw ClientError.message("This request exceeds the 8 MB limit.") }
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForResource = 30
-        config.httpShouldSetCookies = false
-        let transport = URLSession(configuration: config, delegate: PinnedSession(origin: base, pin: connection.pin, keyPin: connection.keyPin, uploadProgress: progress), delegateQueue: nil)
-        defer { transport.invalidateAndCancel() }
+        let transport: URLSession
+        if let progress {
+            transport = URLSession(configuration: configuration, delegate: PinnedSession(origin: base, pin: connection.pin, keyPin: connection.keyPin, uploadProgress: progress), delegateQueue: nil)
+        } else { transport = self.transport(for: base) }
+        defer { if progress != nil { transport.invalidateAndCancel() } }
         request.timeoutInterval = 30
         progress?(0, Int64(size))
         let (data, response) = try await Self.verifiedData(for: request, session: transport)
@@ -350,7 +382,6 @@ final class APIClient {
             throw ClientError.delivery(message ?? "The server could not accept this request.", retryable: (response as? HTTPURLResponse).map { $0.statusCode == 429 || $0.statusCode >= 500 } ?? true)
         }
         let decoded = try JSONDecoder().decode(T.self, from: data)
-        lastSuccessfulURL = connection.url
         return decoded
     }
 }

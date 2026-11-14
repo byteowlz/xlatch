@@ -164,6 +164,14 @@ struct Connection: Codable {
     }
 }
 
+enum ShareTargetSwipe {
+    case select, chain
+    static func action(for translation: CGSize) -> Self? {
+        guard abs(translation.width) >= 44, abs(translation.width) > abs(translation.height) * 1.5 else { return nil }
+        return translation.width < 0 ? .select : .chain
+    }
+}
+
 struct ShareTarget: Identifiable {
     let capability: Capability
     let connection: Connection
@@ -372,9 +380,26 @@ struct ActionIcon: Codable, Hashable {
     }
 }
 
+struct ActionIconTint: Codable, Hashable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    var color: Color { Color(.sRGB, red: red, green: green, blue: blue, opacity: 1) }
+    init(red: Double, green: Double, blue: Double) {
+        self.red = red; self.green = green; self.blue = blue
+    }
+    init?(color: Color) {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return nil }
+        self.init(red: Double(red), green: Double(green), blue: Double(blue))
+    }
+}
+
 struct ActionIconOverride: Codable, Hashable {
     var systemName: String?
     var image: ActionIcon?
+    var tint: ActionIconTint? = nil
+    var usesServerArtwork: Bool { systemName == nil && image == nil }
     static func system(_ name: String) -> ActionIconOverride { ActionIconOverride(systemName: name, image: nil) }
     static func custom(_ icon: ActionIcon) -> ActionIconOverride { ActionIconOverride(systemName: nil, image: icon) }
 }
@@ -386,11 +411,11 @@ struct CapabilityIcon: View {
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         Group {
-            if let image = override?.image?.image(for: colorScheme) { Image(uiImage: image).resizable().scaledToFit() }
-            else if let systemName = override?.systemName { Image(systemName: systemName).resizable().scaledToFit().foregroundStyle(.tint) }
-            else if let image = icon?.image(for: colorScheme) { Image(uiImage: image).resizable().scaledToFit() }
-            else { Image(systemName: "bolt.fill").foregroundStyle(.tint) }
-        }.frame(width: size, height: size).accessibilityHidden(true)
+            if let image = override?.image?.image(for: colorScheme) { Image(uiImage: image).renderingMode(override?.tint == nil ? .original : .template).resizable().scaledToFit() }
+            else if let systemName = override?.systemName { Image(systemName: systemName).resizable().scaledToFit() }
+            else if let image = icon?.image(for: colorScheme) { Image(uiImage: image).renderingMode(override?.tint == nil ? .original : .template).resizable().scaledToFit() }
+            else { Image(systemName: "bolt.fill") }
+        }.foregroundStyle(override?.tint.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(.tint)).frame(width: size, height: size).accessibilityHidden(true)
     }
 }
 
@@ -412,9 +437,13 @@ enum SharedFiles {
             let output = try FileHandle(forWritingTo: target); defer { try? output.close() }
             var remaining = size
             while remaining > 0 {
-                guard let chunk = try source.read(upToCount: Int(min(remaining, 1024 * 1024))), !chunk.isEmpty else { throw ClientError.message("The source file changed while being shared.") }
-                try output.write(contentsOf: chunk)
-                remaining -= UInt64(chunk.count)
+                // Foundation's file reads can leave autoreleased buffers alive for the
+                // entire provider callback. Drain each chunk, not each whole video.
+                try autoreleasepool {
+                    guard let chunk = try source.read(upToCount: Int(min(remaining, 1024 * 1024))), !chunk.isEmpty else { throw ClientError.message("The source file changed while being shared.") }
+                    try output.write(contentsOf: chunk)
+                    remaining -= UInt64(chunk.count)
+                }
             }
             try output.synchronize()
             return target

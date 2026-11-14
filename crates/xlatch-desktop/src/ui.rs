@@ -1,21 +1,28 @@
-//! Management shell; transport work runs off the GPUI event loop.
-use gpui_kit::base::Disableable as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme, Sizable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    px,
-};
+//! Incumbent management shell in Rune; transport and palette I/O stay off its event loop.
+mod fixtures;
+mod icons;
+mod layout;
+#[cfg(test)]
+mod tests;
+
+use crate::appearance::{self, Appearance};
+use rune::{AppHandle, Color, Image, ImageCache, TextEdit, Tx, Waker};
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    time::Duration,
+};
 use xlatch_core::{
     capability::{Capability, Job, Request},
     local::Control,
 };
-use xlatch_desktop::{Draft, Snapshot};
+use xlatch_desktop::{Connection, Draft, Snapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -24,238 +31,192 @@ enum Page {
     Connection,
     Settings,
 }
+impl Page {
+    #[cfg(test)]
+    const ALL: [(Self, &'static str); 4] = [
+        (Self::Actions, "Actions"),
+        (Self::Activity, "Activity"),
+        (Self::Connection, "Connection"),
+        (Self::Settings, "Settings"),
+    ];
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Actions => "Actions",
+            Self::Activity => "Activity",
+            Self::Connection => "Connection",
+            Self::Settings => "Settings",
+        }
+    }
+}
+
+enum Reply {
+    Snapshot(anyhow::Result<Snapshot>),
+    Call(anyhow::Result<Value>),
+    Appearance {
+        choice: String,
+        dark: bool,
+        value: anyhow::Result<(xlatch_desktop::palette::Palette, String)>,
+    },
+}
 
 pub struct Desktop {
-    directory: PathBuf,
+    connection: Connection,
     snapshot: Option<Snapshot>,
     page: Page,
     selected: Option<Capability>,
     draft: Option<Draft>,
     result: Option<Value>,
+    show_result: bool,
+    pub preview_controls: bool,
+    native_error: Option<String>,
+    #[cfg(target_os = "macos")]
+    native_window: Option<rune::WindowHandle>,
+    #[cfg(target_os = "macos")]
+    native_tint: Option<Color>,
     error: Option<String>,
     busy: bool,
-    search: Entity<InputState>,
-    payload: Entity<TextareaState>,
-    address: Entity<InputState>,
+    search: TextEdit,
+    payload: TextEdit,
+    address: TextEdit,
     confirm_approval: bool,
     host_consent: bool,
     raw_input: bool,
     show_contract: bool,
-    _subscriptions: Vec<Subscription>,
+    appearance: Appearance,
+    theme_at: f64,
+    theme_pending: bool,
+    system_dark: Arc<AtomicBool>,
+    sender: mpsc::Sender<Reply>,
+    receiver: mpsc::Receiver<Reply>,
+    waker: Option<Waker>,
+    images: Option<ImageCache>,
+    icons: HashMap<(String, bool), Image>,
+    fixture: bool,
+    refresh_pending: bool,
+    tray_requested: bool,
+    pub handle: Option<AppHandle<Self>>,
     #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
     tray: Option<crate::tray::Tray>,
 }
 
 impl Desktop {
     pub fn new(
-        directory: PathBuf,
+        connection: Connection,
+        choice: String,
         quick: bool,
+        fixture: bool,
         tray: bool,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
     ) -> Self {
-        let search = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Find an action by name or purpose…")
-        });
-        let payload = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .placeholder("Write or paste content for the selected action…")
-        });
-        let address = cx.new(|cx| {
-            InputState::new(window, cx).default_value(directory.to_string_lossy().into_owned())
-        });
-        let subscription = cx.subscribe_in(
-            &search,
-            window,
-            |this: &mut Self, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    let query = this.search.read(cx).value();
-                    let first = this
-                        .snapshot
-                        .as_ref()
-                        .and_then(|snapshot| {
-                            snapshot
-                                .capabilities
-                                .iter()
-                                .find(|action| xlatch_desktop::matches(action, &query))
-                        })
-                        .cloned();
-                    if let Some(action) = first {
-                        this.select(action, window, cx);
-                        this.payload.update(cx, |input, cx| input.focus(window, cx));
-                    }
-                }
-                cx.notify();
-            },
-        );
-        if quick {
-            search.update(cx, |input, cx| input.focus(window, cx));
-        }
-        let mut app = Self {
-            directory,
+        let (sender, receiver) = mpsc::channel();
+        let address = TextEdit::new(connection.path().to_string_lossy().into_owned());
+        let mut search = TextEdit::new("");
+        search.focused = quick;
+        Self {
+            connection,
             snapshot: None,
             page: Page::Actions,
             selected: None,
             draft: None,
             result: None,
+            show_result: false,
+            preview_controls: false,
+            native_error: None,
+            #[cfg(target_os = "macos")]
+            native_window: None,
+            #[cfg(target_os = "macos")]
+            native_tint: None,
             error: None,
             busy: false,
             search,
-            payload,
+            payload: TextEdit::new(""),
             address,
             confirm_approval: false,
             host_consent: false,
             raw_input: false,
             show_contract: false,
-            _subscriptions: vec![subscription],
+            appearance: Appearance::new(choice),
+            theme_at: -2.,
+            theme_pending: false,
+            system_dark: Arc::new(AtomicBool::new(false)),
+            sender,
+            receiver,
+            waker: None,
+            images: None,
+            icons: HashMap::new(),
+            fixture,
+            refresh_pending: !fixture,
+            tray_requested: tray,
+            handle: None,
             #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
             tray: None,
-        };
-        app.refresh(cx);
-        app.install_tray(tray, window, cx);
-        let has_tray = {
-            #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
-            {
-                app.tray.is_some()
-            }
-            #[cfg(not(all(feature = "tray", any(target_os = "macos", target_os = "windows"))))]
-            {
-                false
-            }
-        };
-        window.on_window_should_close(cx, move |_, cx| {
-            if has_tray {
-                cx.hide();
-            } else {
-                cx.quit();
-            }
-            false
-        });
-        app
-    }
-
-    fn install_tray(&mut self, enabled: bool, window: &Window, cx: &Context<'_, Self>) {
-        if !enabled {
-            return;
-        }
-        #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
-        {
-            match crate::tray::Tray::new() {
-                Ok(tray) => self.tray = Some(tray),
-                Err(error) => {
-                    self.error = Some(format!("Tray unavailable: {error:#}"));
-                    return;
-                }
-            }
-            cx.spawn_in(window, async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(150))
-                        .await;
-                    while let Some(action) = crate::tray::next_action() {
-                        let result = this.update_in(cx, |this, window, cx| {
-                            this.tray_action(&action, window, cx);
-                            cx.notify();
-                        });
-                        if result.is_err() {
-                            return;
-                        }
-                    }
-                    if this.upgrade().is_none() {
-                        return;
-                    }
-                }
-            })
-            .detach();
-        }
-        #[cfg(not(all(feature = "tray", any(target_os = "macos", target_os = "windows"))))]
-        {
-            let _ = (window, cx);
-            self.error = Some(
-                "Tray support is unavailable in this build. The management window remains usable."
-                    .into(),
-            );
         }
     }
 
-    #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
-    fn tray_action(&mut self, action: &str, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if action == "quit" {
-            cx.quit();
-            return;
-        }
-        match action {
-            "activity" => {
-                self.page = Page::Activity;
-                self.refresh(cx);
-            }
-            "quick" => {
-                self.page = Page::Actions;
-                self.search.update(cx, |input, cx| input.focus(window, cx));
-            }
-            _ => {}
-        }
-        cx.activate(true);
-        window.activate_window();
+    /// Safe tooling initializer: never connects, captures or reads user theme/config files.
+    pub fn fixture() -> Self {
+        let mut state = Self::new(
+            Connection::Local("/synthetic/xlatch".into()),
+            "dark".into(),
+            false,
+            true,
+            false,
+        );
+        fixtures::actions(&mut state);
+        state.preview_controls = true;
+        state
     }
 
-    fn refresh(&mut self, cx: &mut Context<'_, Self>) {
+    pub fn setup(&mut self, waker: Waker) {
+        self.images = Some(ImageCache::new(waker.clone()));
+        self.waker = Some(waker);
+    }
+
+    fn work(&mut self, request: Option<Control>) {
         if self.busy {
             return;
         }
-        self.busy = true;
-        let directory = self.directory.clone();
-        cx.spawn(async move |this, cx| {
-            let response = cx.background_spawn(async move { xlatch_desktop::snapshot(&directory) }).await;
-            let _ = this.update(cx, |this, cx| {
-                this.busy = false;
-                match response {
-                    Ok(snapshot) => {
-                        this.error = None;
-                        if let Some(selected) = &this.selected
-                            && !snapshot.capabilities.iter().any(|c| c == selected) {
-                                this.selected = None;
-                                this.error = Some("The selected action changed. Select it again to review the new revision.".into());
-                        }
-                        this.snapshot = Some(snapshot);
-                    },
-                    Err(error) => { this.error = Some(format!("{error:#}")); this.snapshot = None; }
-                }
-                cx.notify();
-            });
-        }).detach();
-        cx.notify();
-    }
-
-    fn request(&mut self, request: Control, cx: &mut Context<'_, Self>) {
-        if self.busy {
+        if self.fixture {
+            fixtures::request(self, request);
             return;
         }
         self.busy = true;
         self.error = None;
-        self.result = None;
-        let directory = self.directory.clone();
-        cx.spawn(async move |this, cx| {
-            let response = cx
-                .background_spawn(async move { xlatch_desktop::call(&directory, request) })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                this.busy = false;
-                match response {
-                    Ok(value) => {
-                        this.result = Some(value);
-                        this.refresh(cx);
-                    }
-                    Err(error) => this.error = Some(format!("{error:#}")),
+        let connection = self.connection.clone();
+        let sender = self.sender.clone();
+        let waker = self.waker.clone();
+        let worker = std::thread::Builder::new()
+            .name("xlatch-client".into())
+            .spawn(move || {
+                let reply = request.map_or_else(
+                    || Reply::Snapshot(connection.snapshot()),
+                    |request| Reply::Call(connection.call(request)),
+                );
+                let _ = sender.send(reply);
+                if let Some(waker) = waker {
+                    waker();
                 }
-                cx.notify();
             });
-        })
-        .detach();
-        cx.notify();
+        if let Err(error) = worker {
+            self.busy = false;
+            self.error = Some(format!("Cannot start client worker: {error}"));
+        }
     }
 
-    fn select(&mut self, capability: Capability, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn request(&mut self, request: Control) {
+        if self.busy {
+            return;
+        }
+        self.result = None;
+        self.show_result = matches!(
+            &request,
+            Control::Rpc {
+                request: Request::Job { .. }
+            }
+        );
+        self.work(Some(request));
+    }
+
+    fn select(&mut self, capability: Capability) {
         if self.busy {
             return;
         }
@@ -266,454 +227,339 @@ impl Desktop {
         self.result = None;
         self.confirm_approval = false;
         self.host_consent = false;
-        self.payload
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        cx.notify();
+        self.payload.replace_text("");
     }
 
-    fn invoke(&mut self, cx: &mut Context<'_, Self>) {
+    fn search_first(&mut self) {
+        let first = self
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .capabilities
+                    .iter()
+                    .find(|action| xlatch_desktop::matches(action, &self.search.text))
+            })
+            .cloned();
+        if let Some(action) = first {
+            self.select(action);
+            self.search.focused = false;
+            self.payload.focused = true;
+        }
+    }
+
+    fn invoke(&mut self) {
+        if self.busy || self.snapshot.is_none() {
+            return;
+        }
         let Some(capability) = &self.selected else {
             return;
         };
-        let text = self.payload.read(cx).value();
         let input = if self.raw_input {
-            text.to_string()
+            self.payload.text.clone()
         } else {
-            json!({"text":text.as_str(),"mime_type":"text/plain"}).to_string()
+            json!({"text":self.payload.text,"mime_type":"text/plain"}).to_string()
         };
         match Draft::prepare(capability, &input, self.draft.as_ref()) {
             Ok(draft) => {
+                if self
+                    .draft
+                    .as_ref()
+                    .is_some_and(|previous| previous.id != draft.id)
+                {
+                    self.error=Some("Input changed. Choose New run explicitly before sending changed content; the previous run's identity is retained.".into());
+                    return;
+                }
                 let request = draft.request();
                 self.draft = Some(draft);
-                self.request(request, cx);
+                self.request(request);
             }
             Err(error) => self.error = Some(format!("{error:#}")),
         }
-        cx.notify();
     }
 
-    fn paste(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            let input = if self.raw_input {
-                json!({"text":text,"mime_type":"text/plain"}).to_string()
-            } else {
-                text
-            };
-            self.payload
-                .update(cx, |state, cx| state.set_value(input, window, cx));
-            self.draft = None;
-            self.result = None;
-        } else {
-            self.error = Some("The clipboard does not contain text.".into());
+    fn paste(&mut self, tx: &mut Tx) {
+        if self.busy {
+            return;
         }
-        cx.notify();
-    }
-
-    fn sidebar(&self, cx: &Context<'_, Self>) -> impl IntoElement + use<> {
-        let theme = cx.theme().clone();
-        let pages = [
-            (
-                Page::Actions,
-                "Actions",
-                gpui_kit::assets::IconName::LayoutGrid,
-            ),
-            (
-                Page::Activity,
-                "Activity",
-                gpui_kit::assets::IconName::Activity,
-            ),
-            (
-                Page::Connection,
-                "Connection",
-                gpui_kit::assets::IconName::Server,
-            ),
-            (
-                Page::Settings,
-                "Settings",
-                gpui_kit::assets::IconName::Settings,
-            ),
-        ];
-        v_flex()
-            .w(px(200.))
-            .flex_shrink_0()
-            .h_full()
-            .p_4()
-            .gap_2()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
-            .child(
-                div()
-                    .text_2xl()
-                    .font_weight(gpui_kit::FontWeight::BOLD)
-                    .mb_4()
-                    .child("xlatch"),
-            )
-            .children(
-                pages
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (page, label, icon))| {
-                        Button::new(("nav", i))
-                            .ghost()
-                            .w_full()
-                            .justify_start()
-                            .icon(gpui_kit::component::Icon::new(icon))
-                            .label(label)
-                            .bg(if self.page == page {
-                                theme.sidebar_accent
-                            } else {
-                                theme.sidebar
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.page = page;
-                                cx.notify();
-                            }))
-                    }),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child("Local operator"),
-            )
-            .child(div().text_sm().child(if self.snapshot.is_some() {
-                "Connected"
+        tx.read_clipboard(|state: &mut Self, content, _| {
+            if content.text().is_empty() {
+                state.error = Some("The clipboard does not contain text.".into());
+                return;
+            }
+            let input = if state.raw_input {
+                json!({"text":content.text(),"mime_type":"text/plain"}).to_string()
             } else {
-                "Not connected"
-            }))
+                content.text().into()
+            };
+            state.payload.replace_text(input);
+            state.result = None;
+        });
     }
 
-    fn actions(&self, cx: &Context<'_, Self>) -> impl IntoElement + use<> {
-        let query = self.search.read(cx).value();
-        let actions = self
-            .snapshot
-            .as_ref()
-            .map(|s| s.capabilities.clone())
-            .unwrap_or_default();
-        let theme = cx.theme().clone();
-        h_flex()
-            .flex_1()
-            .min_h_0()
-            .items_start()
-            .gap_6()
-            .child(
-                v_flex()
-                    .w(px(250.))
-                    .flex_shrink_0()
-                    .h_full()
-                    .gap_3()
-                    .child(Input::new(&self.search))
-                    .child(
-                        div()
-                            .id("action-list")
-                            .overflow_y_scroll()
-                            .flex_1()
-                            .children(
-                                actions
-                                    .into_iter()
-                                    .filter(|c| xlatch_desktop::matches(c, &query))
-                                    .map(|capability| {
-                                        let selected = self.selected.as_ref().is_some_and(|s| {
-                                            s.manifest.id == capability.manifest.id
-                                        });
-                                        v_flex()
-                                            .id(SharedString::from(capability.manifest.id.clone()))
-                                            .px_3()
-                                            .py_3()
-                                            .gap_1()
-                                            .mb_1()
-                                            .rounded(cx.theme().radius * 1.5)
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(theme.list_hover))
-                                            .bg(if selected {
-                                                theme.secondary
-                                            } else {
-                                                theme.background
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(action_icon(
-                                                        &capability,
-                                                        theme.is_dark(),
-                                                    ))
-                                                    .child(SharedString::from(
-                                                        capability.manifest.title.clone(),
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme.muted_foreground)
-                                                    .child(SharedString::from(format!(
-                                                        "{} · {}",
-                                                        capability.manifest.id, capability.status
-                                                    ))),
-                                            )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.select(capability.clone(), window, cx);
-                                            }))
-                                    }),
-                            ),
-                    ),
-            )
-            .child(self.action_detail(cx))
-    }
-
-    fn action_detail(&self, cx: &Context<'_, Self>) -> gpui_kit::AnyElement {
-        let Some(action) = &self.selected else {
-            return v_flex()
-                .flex_1()
-                .gap_3()
-                .pt_8()
-                .child(div().text_xl().child("Choose an action"))
-                .min_w_0()
-                .child(div().text_color(cx.theme().muted_foreground).child("Choose where to send your content. Search by name or purpose, then press Enter."))
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Command / Ctrl + K opens search. Pending actions need your review."))
-                .into_any_element();
+    fn connect(&mut self) {
+        if self.busy {
+            return;
+        }
+        let path = PathBuf::from(&self.address.text);
+        if !path.is_absolute() {
+            self.error = Some("Use an absolute directory path.".into());
+            return;
+        }
+        self.connection = if self.connection.is_paired() {
+            Connection::Paired(path)
+        } else {
+            Connection::Local(path)
         };
-        let theme = cx.theme().clone();
-        let needs_host_consent = action.manifest.executes_commands();
-        v_flex().id("action-detail").flex_1().min_w_0().h_full().overflow_y_scroll().gap_3().whitespace_normal()
-            .child(div().text_2xl().font_weight(gpui_kit::FontWeight::SEMIBOLD).child(SharedString::from(action.manifest.title.clone())))
-            .child(div().w_full().text_color(theme.muted_foreground).child(SharedString::from(action.manifest.description.clone())))
-            .child(div().id("revision").overflow_x_scroll().text_xs().text_color(theme.muted_foreground).child(SharedString::from(format!("Revision {}",action.revision))))
-            .child(div().text_sm().child(SharedString::from(format!("Accepts {}",action.manifest.accepts.join(", ")))))
-            .when(action.status == "active", |view| view
-                .child(h_flex().flex_wrap().gap_2().child(div().flex_1().child(if self.raw_input { "JSON input" } else { "Text to send" }))
-                    .child(Button::new("input-mode").small().label(if self.raw_input { "Use text" } else { "Use JSON" }).on_click(cx.listener(|this,_,_,cx| {this.raw_input = !this.raw_input;this.draft=None;cx.notify();})))
-                    .child(Button::new("paste").small().label("Paste text").on_click(cx.listener(|this,_,window,cx| this.paste(window,cx))))
-                    .child(Button::new("new-run").small().label("New run").on_click(cx.listener(|this,_,_,cx| {this.draft=None;this.result=None;cx.notify();}))))
-                .child(Textarea::new(&self.payload).h(px(160.)))
-                .child(Button::new("invoke").primary().label(if self.draft.is_some() {"Retry / retrieve same run"} else {"Run action"}).disabled(self.busy || self.snapshot.is_none()).on_click(cx.listener(|this,_,_,cx| this.invoke(cx))))
-                .child(div().text_xs().text_color(theme.muted_foreground).child("Retries keep the same job identity. Choose New run to execute again.")))
-            .child(Button::new("contract").small().label(if self.show_contract { "Hide contract" } else { "Inspect contract & execution" }).on_click(cx.listener(|this,_,_,cx| {this.show_contract = !this.show_contract;cx.notify();})))
-            .when(self.show_contract || self.confirm_approval, |view| view.child(div().id("manifest").w_full().p_3().bg(theme.sidebar).rounded(theme.radius * 1.5).font_family(theme.mono_font_family.clone()).max_h(px(260.)).overflow_y_scroll().overflow_x_scroll().text_xs().child(SharedString::from(serde_json::to_string_pretty(&action.manifest).unwrap_or_default()))))
-            .when(action.status != "active", |view| view
-                .child(Button::new("review").label("Review activation").disabled(self.busy).on_click(cx.listener(|this,_,_,cx| {this.confirm_approval=true;cx.notify();})))
-                .when(self.confirm_approval, |view| view
-                    .child("Approve this exact revision? Command actions run with the executor’s OS permissions. Protected servers require approval from an enrolled phone.")
-                    .when(needs_host_consent, |view| view.child(Button::new("host-consent").label(if self.host_consent {"Host execution acknowledged"} else {"Acknowledge host execution"}).on_click(cx.listener(|this,_,_,cx| {this.host_consent = !this.host_consent;cx.notify();}))))
-                    .child(Button::new("approve").label("Approve revision").disabled(self.busy || (needs_host_consent && !self.host_consent)).on_click(cx.listener(|this,_,_,cx| {
-                        if let Some(action)=&this.selected {
-                            let request=Control::Approve{id:action.manifest.id.clone(),revision:action.revision.clone(),allow_host_execution:this.host_consent};
-                            this.confirm_approval=false;this.request(request,cx);
+        self.selected = None;
+        self.snapshot = None;
+        self.draft = None;
+        self.result = None;
+        self.work(None);
+    }
+
+    fn receive(&mut self, reply: Reply) {
+        match reply {
+            Reply::Snapshot(response) => {
+                self.busy = false;
+                match response {
+                    Ok(snapshot) => {
+                        self.error = None;
+                        if self
+                            .selected
+                            .as_ref()
+                            .is_some_and(|selected| !snapshot.capabilities.contains(selected))
+                        {
+                            self.selected = None;
+                            self.error=Some("The selected action changed. Select it again to review the new revision.".into());
                         }
-                    })))))
-            .into_any_element()
-    }
-
-    fn activity(&self, cx: &Context<'_, Self>) -> impl IntoElement + use<> {
-        let jobs = self
-            .snapshot
-            .as_ref()
-            .map(|s| s.jobs.clone())
-            .unwrap_or_default();
-        v_flex()
-            .id("activity")
-            .flex_1()
-            .overflow_y_scroll()
-            .gap_2()
-            .when(jobs.is_empty(), |view| {
-                view.child("No recent jobs. Refresh after running an action.")
-            })
-            .children(jobs.into_iter().map(|job| Self::job_row(job, cx)))
-    }
-
-    fn job_row(job: Job, cx: &Context<'_, Self>) -> impl IntoElement + use<> {
-        let id = job.id.clone();
-        let cancellable = matches!(job.status.as_str(), "queued" | "running");
-        h_flex()
-            .p_3()
-            .gap_3()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                v_flex()
-                    .flex_1()
-                    .child(SharedString::from(job.capability_id))
-                    .child(
-                        div()
-                            .text_xs()
-                            .child(SharedString::from(format!("{} · {}", job.status, job.id))),
-                    ),
-            )
-            .child(
-                Button::new(SharedString::from(format!("result-{id}")))
-                    .small()
-                    .label("Result")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.request(
-                            Control::Rpc {
-                                request: Request::Job { id: id.clone() },
-                            },
-                            cx,
-                        );
-                    })),
-            )
-            .when(cancellable, |view| {
-                view.child(
-                    Button::new(SharedString::from(format!("cancel-{}", job.id)))
-                        .small()
-                        .label("Cancel")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.request(
-                                Control::Rpc {
-                                    request: Request::Cancel { id: job.id.clone() },
-                                },
-                                cx,
-                            );
-                        })),
-                )
-            })
-    }
-
-    fn connection(&self, cx: &Context<'_, Self>) -> impl IntoElement + use<> {
-        v_flex().gap_4().max_w(px(620.))
-            .child("Local daemon connection")
-            .child("Use the same data directory as xlatch service run, or the configured control directory. This app does not start or stop the daemon automatically.")
-            .child(Input::new(&self.address))
-            .child(Button::new("connect").label("Connect").disabled(self.busy).on_click(cx.listener(|this,_,_,cx| {
-                let path=PathBuf::from(this.address.read(cx).value().as_str());
-                if !path.is_absolute() {this.error=Some("Use an absolute directory path.".into());cx.notify();return;}
-                this.directory=path;this.selected=None;this.snapshot=None;this.draft=None;this.result=None;this.refresh(cx);
-            })))
-            .child("Authority: local operator. The server enforces protected-mode restrictions; the desktop app cannot bypass phone approval.")
-            .child("Paired remote connections are not available in this first desktop build.")
-    }
-
-    fn settings(cx: &Context<'_, Self>) -> impl IntoElement + use<> {
-        let appearance = cx.global::<crate::appearance::Appearance>();
-        v_flex().gap_4().max_w(px(620.))
-            .child(div().text_lg().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Appearance"))
-            .child(h_flex().gap_2().children([("auto","Follow system"),("light","Light"),("dark","Dark")].into_iter().map(|(choice,label)| {
-                Button::new(choice).label(label).when(appearance.choice == choice, Button::primary).on_click(cx.listener(move |_,_,_,cx| crate::appearance::select(choice,cx)))
-            })))
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(appearance.status.clone()))
-            .child("Automatic mode follows xlatch/theme.toml or theme.json, then Omarchy’s active palette, then system light/dark. Theme files reload automatically.")
-            .child(div().pt_4().text_lg().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("Quick launch"))
-            .child("Press Command/Ctrl+K to jump to action search. Use --quick when launching from omni or a system shortcut.")
-            .child("Optional tray")
-            .child("Start with --tray in a tray-enabled build for quick access to search and activity. Closing the window does not stop the server.")
-            .child("Context stays explicit")
-            .child("Paste text only reads the clipboard when clicked. ctx captures and omni shortcuts will connect through reviewed inputs; no background capture is enabled.")
-    }
-}
-
-impl Render for Desktop {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        h_flex()
-            .size_full()
-            .bg(theme.background)
-            .text_color(theme.foreground)
-            .text_sm()
-            .on_key_down(
-                cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                    if (event.keystroke.modifiers.platform || event.keystroke.modifiers.control)
-                        && event.keystroke.key == "k"
-                    {
-                        this.page = Page::Actions;
-                        this.search.update(cx, |state, cx| state.focus(window, cx));
-                        cx.notify();
+                        self.snapshot = Some(snapshot);
                     }
-                }),
-            )
-            .child(self.sidebar(cx))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .h_full()
-                    .min_w_0()
-                    .p_6()
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(div().flex_1().text_xl().child(match self.page {
-                                Page::Actions => "Actions",
-                                Page::Activity => "Activity",
-                                Page::Connection => "Connection",
-                                Page::Settings => "Settings",
-                            }))
-                            .child(
-                                Button::new("refresh")
-                                    .label(if self.busy { "Working…" } else { "Refresh" })
-                                    .disabled(self.busy)
-                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                            ),
-                    )
-                    .when_some(self.error.clone(), |view, error| {
-                        view.child(
-                            div()
-                                .p_3()
-                                .border_1()
-                                .border_color(theme.danger)
-                                .text_color(theme.danger)
-                                .child(error),
-                        )
-                    })
-                    .child(match self.page {
-                        Page::Actions => self.actions(cx).into_any_element(),
-                        Page::Activity => self.activity(cx).into_any_element(),
-                        Page::Connection => self.connection(cx).into_any_element(),
-                        Page::Settings => Self::settings(cx).into_any_element(),
-                    })
-                    .when_some(self.result.clone(), |view, result| {
-                        view.child(
-                            v_flex()
-                                .gap_2()
-                                .max_h(px(200.))
-                                .child(h_flex().gap_3().child("Server response").child(
-                                    Button::new("copy-result").small().label("Copy").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            if let Some(value) = &this.result {
-                                                cx.write_to_clipboard(
-                                                    gpui_kit::ClipboardItem::new_string(
-                                                        value.to_string(),
-                                                    ),
-                                                );
-                                            }
-                                        }),
-                                    ),
-                                ))
-                                .child(
-                                    div()
-                                        .id("response")
-                                        .p_3()
-                                        .bg(theme.sidebar)
-                                        .font_family(theme.mono_font_family.clone())
-                                        .overflow_y_scroll()
-                                        .overflow_x_scroll()
-                                        .text_xs()
-                                        .child(SharedString::from(
-                                            serde_json::to_string_pretty(&result)
-                                                .unwrap_or_default(),
-                                        )),
-                                ),
-                        )
-                    }),
-            )
+                    Err(error) => {
+                        self.error = Some(format!("{error:#}"));
+                        self.snapshot = None;
+                    }
+                }
+            }
+            Reply::Call(response) => {
+                self.busy = false;
+                match response {
+                    Ok(value) => {
+                        self.result = Some(value);
+                        self.work(None);
+                    }
+                    Err(error) => self.error = Some(format!("{error:#}")),
+                }
+            }
+            Reply::Appearance {
+                choice,
+                dark,
+                value,
+            } => {
+                self.theme_pending = false;
+                if self.appearance.choice == choice
+                    && self.system_dark.load(Ordering::Relaxed) == dark
+                {
+                    self.appearance.update(value);
+                } else {
+                    self.theme_at = -2.;
+                }
+            }
+        }
+    }
+
+    fn theme(&mut self, now: f64) {
+        if self.fixture || self.theme_pending || now - self.theme_at < 2. {
+            return;
+        }
+        self.theme_at = now;
+        self.theme_pending = true;
+        let choice = self.appearance.choice.clone();
+        let dark = self.system_dark.load(Ordering::Relaxed);
+        let sender = self.sender.clone();
+        let waker = self.waker.clone();
+        let worker = std::thread::Builder::new()
+            .name("xlatch-appearance".into())
+            .spawn(move || {
+                let value = appearance::resolve(&choice, dark);
+                let _ = sender.send(Reply::Appearance {
+                    choice,
+                    dark,
+                    value,
+                });
+                if let Some(waker) = waker {
+                    waker();
+                }
+            });
+        if let Err(error) = worker {
+            self.theme_pending = false;
+            self.appearance.status = format!("Keeping previous theme: {error}");
+        }
+    }
+
+    pub const fn has_tray(&self) -> bool {
+        #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
+        {
+            self.tray.is_some()
+        }
+        #[cfg(not(all(feature = "tray", any(target_os = "macos", target_os = "windows"))))]
+        {
+            let _ = self;
+            false
+        }
+    }
+
+    fn tray(&mut self) -> bool {
+        let mut changed = false;
+        if self.tray_requested {
+            self.tray_requested = false;
+            changed = true;
+            #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
+            match crate::tray::Tray::new() {
+                Ok(tray) => self.tray = Some(tray),
+                Err(error) => self.error = Some(format!("Tray unavailable: {error:#}")),
+            }
+            #[cfg(not(all(feature = "tray", any(target_os = "macos", target_os = "windows"))))]
+            {
+                self.error=Some("Tray support is unavailable in this build. The management window remains usable.".into());
+            }
+        }
+        #[cfg(all(feature = "tray", any(target_os = "macos", target_os = "windows")))]
+        while let Some(action) = crate::tray::next_action() {
+            changed = true;
+            if let Some(handle) = &self.handle {
+                if action == "quit" {
+                    handle.quit();
+                    continue;
+                }
+                handle.open();
+            }
+            match action.as_str() {
+                "quick" => {
+                    self.page = Page::Actions;
+                    self.search.focused = true;
+                    self.payload.focused = false;
+                }
+                "activity" => {
+                    self.page = Page::Activity;
+                    self.work(None);
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
+    fn icons(&mut self) {
+        let (Some(images), Some(snapshot)) = (&self.images, &self.snapshot) else {
+            return;
+        };
+        for capability in &snapshot.capabilities {
+            for dark in [false, true] {
+                let key = (capability.revision.clone(), dark);
+                if self.icons.contains_key(&key) {
+                    continue;
+                }
+                if let Some(bytes) = capability
+                    .manifest
+                    .icon
+                    .as_ref()
+                    .and_then(|icon| icon.png_bytes_for(dark).ok())
+                {
+                    self.icons.insert(key, images.load(bytes));
+                }
+            }
+        }
+        self.icons.retain(|(revision, _), _| {
+            snapshot
+                .capabilities
+                .iter()
+                .any(|capability| &capability.revision == revision)
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn native_window_ready(&mut self, window: rune::WindowHandle) {
+        self.native_window = Some(window);
+        self.native_tint = None;
+    }
+
+    #[cfg(target_os = "macos")]
+    fn native_chrome(&mut self) -> bool {
+        let Some(window) = &self.native_window else {
+            return false;
+        };
+        let Ok(paint) = self
+            .appearance
+            .paint(self.system_dark.load(Ordering::Relaxed))
+        else {
+            return false;
+        };
+        if self.native_tint == Some(paint.fg) {
+            return false;
+        }
+        match crate::native_window::apply(window, paint.fg) {
+            Ok(()) => {
+                self.native_tint = Some(paint.fg);
+                self.native_error = None;
+                true
+            }
+            Err(error) => {
+                let message = format!("Native window controls: {error:#}");
+                let changed = self.native_error.as_ref() != Some(&message);
+                self.native_error = Some(message);
+                changed
+            }
+        }
+    }
+
+    pub fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
+        let refreshed = self.refresh_pending;
+        if refreshed {
+            self.refresh_pending = false;
+            self.work(None);
+        }
+        let mut changed = self.tray() || refreshed;
+        while let Ok(reply) = self.receiver.try_recv() {
+            self.receive(reply);
+            changed = true;
+        }
+        self.theme(now);
+        self.icons();
+        #[cfg(target_os = "macos")]
+        {
+            changed |= self.native_chrome();
+        }
+        if !self.fixture || self.has_tray() {
+            tx.wake_after(Duration::from_millis(if self.has_tray() {
+                150
+            } else {
+                2000
+            }));
+        }
+        changed
     }
 }
 
-fn action_icon(capability: &Capability, dark: bool) -> gpui_kit::AnyElement {
-    if let Some(bytes) = capability
-        .manifest
-        .icon
-        .as_ref()
-        .and_then(|icon| icon.png_bytes_for(dark).ok())
-    {
-        gpui_kit::img(std::sync::Arc::new(gpui_kit::Image::from_bytes(
-            gpui_kit::ImageFormat::Png,
-            bytes,
-        )))
-        .w(px(28.))
-        .h(px(28.))
-        .into_any_element()
-    } else {
-        div().w(px(28.)).h(px(28.)).child("◇").into_any_element()
-    }
-}
+pub use layout::{on_key, view};
+
+pub const TITLEBAR_HEIGHT: f32 = 52.;
+pub const WINDOW_RADIUS: f32 = 12.;
+
+type Scene = (&'static str, fn(&mut Desktop));
+pub const SCENES: &[Scene] = &[
+    ("actions", fixtures::actions),
+    ("activity", fixtures::activity),
+    ("connection", fixtures::connection),
+    ("settings", fixtures::settings),
+    ("pending", fixtures::pending),
+    ("paired", fixtures::paired),
+    ("offline", fixtures::offline),
+    ("selected", fixtures::selected),
+    ("busy", fixtures::busy),
+    ("unknown", fixtures::unknown),
+    ("empty", fixtures::empty),
+    ("long", fixtures::long),
+    ("contract", fixtures::contract),
+    ("result", fixtures::result),
+];

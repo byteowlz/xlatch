@@ -193,7 +193,7 @@ mod tests {
         let before = vec!["https://127.0.0.1:7443".to_owned()];
         let (config, pin) = prepare(&dir, &before).await?;
         let initial = health(&dir)?;
-        let after = vec!["https://100.64.0.1:7443".to_owned()];
+        let after = vec!["https://203.0.113.1:7443".to_owned()];
         refresh(&dir, &after, &config).await?;
         let renewed: Identity = serde_json::from_slice(&std::fs::read(dir.join(FILE))?)?;
         ensure!(

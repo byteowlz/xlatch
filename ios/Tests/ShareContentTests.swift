@@ -154,3 +154,82 @@ extension ShareContentTests {
         XCTAssertTrue(ShareInput.batch([], addingText: "note").isEmpty)
     }
 }
+
+
+extension ShareContentTests {
+    func testDirectionalTargetSwipesIgnoreVerticalScrollingAndSmallDrags() {
+        XCTAssertEqual(ShareTargetSwipe.action(for: CGSize(width: -72, height: 5)), .select)
+        XCTAssertEqual(ShareTargetSwipe.action(for: CGSize(width: 72, height: 5)), .chain)
+        XCTAssertNil(ShareTargetSwipe.action(for: CGSize(width: -20, height: 0)))
+        XCTAssertNil(ShareTargetSwipe.action(for: CGSize(width: 10, height: 100)))
+        XCTAssertNil(ShareTargetSwipe.action(for: CGSize(width: -72, height: 70)))
+        XCTAssertNil(ShareTargetSwipe.action(for: .zero))
+    }
+}
+
+extension ShareContentTests {
+    func testMovieRepresentationWinsOverPreviewAndGenericData() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
+        try Data([1, 2, 3]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let provider = NSItemProvider()
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.jpeg.identifier, fileOptions: [], visibility: .all) { completion in
+            completion(url, false, nil); return nil
+        }
+        provider.registerFileRepresentation(forTypeIdentifier: UTType.movie.identifier, fileOptions: [], visibility: .all) { completion in
+            completion(url, false, nil); return nil
+        }
+        let inputs = try await ShareContentLoader.loadAll([provider])
+        defer { for input in inputs { if let file = input.localFile { try? FileManager.default.removeItem(at: file) } } }
+        XCTAssertEqual(inputs.map(\.mime), ["video/quicktime"])
+    }
+
+    func testTwoLargeMovieProvidersStayOnDiskWithBoundedMemory() async throws {
+        let urls = (0..<2).map { _ in FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov") }
+        defer { for url in urls { try? FileManager.default.removeItem(at: url) } }
+        let size: UInt64 = 192 * 1024 * 1024
+        for url in urls {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: size); try handle.close()
+        }
+        let providers = urls.map { url in
+            let provider = NSItemProvider()
+            provider.registerFileRepresentation(forTypeIdentifier: UTType.movie.identifier, fileOptions: [], visibility: .all) { completion in
+                completion(url, false, nil); return nil
+            }
+            return provider
+        }
+        let before = residentBytes()
+        let inputs = try await ShareContentLoader.loadAll(providers)
+        let after = residentBytes()
+        let growth = after - min(before, after)
+        defer { for input in inputs { if let file = input.localFile { try? FileManager.default.removeItem(at: file) } } }
+        XCTAssertLessThan(growth, 48 * 1024 * 1024, "Import must not retain a video-sized buffer")
+        XCTAssertEqual(inputs.map(\.mime), ["video/quicktime", "video/quicktime"])
+        let capability = Capability(manifest: Manifest(id: "pi.send.test", title: "Pi", description: "", accepts: ["*/*"], file_input: "path"), revision: "test", status: "active")
+        let connection = Connection(url: "https://example.test", pin: "pin", deviceID: "video-test", privateKey: Data(repeating: 1, count: 32))
+        let beforeHash = residentBytes()
+        let items = try inputs.map { try OutboxItem(input: $0, capability: capability, connection: connection, now: Date()) }
+        let afterHash = residentBytes()
+        XCTAssertLessThan(afterHash - min(beforeHash, afterHash), 48 * 1024 * 1024, "Hashing must not retain a video-sized buffer")
+        XCTAssertEqual(items.count, 2)
+        for input in inputs {
+            let file = try XCTUnwrap(input.localFile)
+            XCTAssertEqual(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize, Int(size))
+            XCTAssertNil((input.payload["file"] as? [String: Any])?["data_base64"])
+        }
+    }
+
+    private func residentBytes() -> UInt64 {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        XCTAssertEqual(result, KERN_SUCCESS)
+        return info.resident_size
+    }
+}

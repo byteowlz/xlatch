@@ -1,0 +1,29 @@
+[package]
+name = "xlatch-island"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Optional xlatch companion: show job activity on the anchr desktop island"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "xlatch-island"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+xlatch-core = { path = "../xlatch-core" }
+xlatch-desktop = { path = "../xlatch-desktop" }
+
+[dev-dependencies]
+tempfile.workspace = true

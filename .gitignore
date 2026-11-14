@@ -1,4 +1,6 @@
 .pi/todos/
+# repo-local trx ledger (local tool state, not repository content)
+.trx/
 /target
 .env
 .DS_Store

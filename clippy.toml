@@ -12,6 +12,7 @@ too-many-lines-threshold = 100
 # Domain terms that shouldn't trigger spelling warnings in docs
 # Add your own domain-specific terms here
 doc-valid-idents = [
+    "AppKit",   # Apple UI framework
     "LLM",      # Large Language Model
     "AI",       # Artificial Intelligence
     "API",      # Application Programming Interface

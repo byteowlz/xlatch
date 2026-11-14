@@ -965,18 +965,296 @@ struct ServerSettingsView: View {
     }
 }
 
+private struct ActionSymbolCategory: Identifiable {
+    let title: String
+    let symbols: [ActionSymbol]
+    var id: String { title }
+}
+
+private struct ActionSymbol: Identifiable {
+    let name: String
+    let title: String
+    var id: String { name }
+}
+
+private enum ActionSymbolCatalog {
+    static let categories: [ActionSymbolCategory] = [
+        ActionSymbolCategory(title: "Send & save", symbols: [
+            ActionSymbol(name: "paperplane.fill", title: "Send"),
+            ActionSymbol(name: "tray.and.arrow.down.fill", title: "Inbox"),
+            ActionSymbol(name: "tray.and.arrow.up.fill", title: "Outbox"),
+            ActionSymbol(name: "bookmark.fill", title: "Bookmark"),
+            ActionSymbol(name: "archivebox.fill", title: "Archive"),
+            ActionSymbol(name: "folder.fill", title: "Folder"),
+            ActionSymbol(name: "externaldrive.fill", title: "Drive"),
+            ActionSymbol(name: "icloud.fill", title: "Cloud"),
+            ActionSymbol(name: "square.and.arrow.up", title: "Share"),
+            ActionSymbol(name: "square.and.arrow.down", title: "Download"),
+            ActionSymbol(name: "arrow.up.right", title: "Open"),
+            ActionSymbol(name: "arrow.triangle.branch", title: "Route"),
+            ActionSymbol(name: "arrow.triangle.merge", title: "Merge"),
+            ActionSymbol(name: "arrow.triangle.2.circlepath", title: "Sync"),
+            ActionSymbol(name: "pin.fill", title: "Pin"),
+            ActionSymbol(name: "shippingbox.fill", title: "Package"),
+        ]),
+        ActionSymbolCategory(title: "AI & development", symbols: [
+            ActionSymbol(name: "terminal.fill", title: "Terminal"),
+            ActionSymbol(name: "chevron.left.forwardslash.chevron.right", title: "Code"),
+            ActionSymbol(name: "cpu.fill", title: "Processor"),
+            ActionSymbol(name: "brain", title: "Brain"),
+            ActionSymbol(name: "sparkles", title: "AI"),
+            ActionSymbol(name: "wand.and.stars", title: "Transform"),
+            ActionSymbol(name: "bolt.fill", title: "Action"),
+            ActionSymbol(name: "gearshape.fill", title: "Settings"),
+            ActionSymbol(name: "wrench.and.screwdriver.fill", title: "Tools"),
+            ActionSymbol(name: "hammer.fill", title: "Build"),
+            ActionSymbol(name: "ladybug.fill", title: "Debug"),
+            ActionSymbol(name: "testtube.2", title: "Experiment"),
+            ActionSymbol(name: "curlybraces", title: "JSON"),
+            ActionSymbol(name: "number", title: "Number"),
+            ActionSymbol(name: "function", title: "Function"),
+            ActionSymbol(name: "network", title: "Network"),
+        ]),
+        ActionSymbolCategory(title: "Links & reading", symbols: [
+            ActionSymbol(name: "link", title: "Link"),
+            ActionSymbol(name: "globe", title: "Web"),
+            ActionSymbol(name: "safari.fill", title: "Browser"),
+            ActionSymbol(name: "book.fill", title: "Book"),
+            ActionSymbol(name: "books.vertical.fill", title: "Library"),
+            ActionSymbol(name: "doc.text.fill", title: "Article"),
+            ActionSymbol(name: "newspaper.fill", title: "News"),
+            ActionSymbol(name: "text.magnifyingglass", title: "Research"),
+            ActionSymbol(name: "magnifyingglass", title: "Search"),
+            ActionSymbol(name: "eyeglasses", title: "Read"),
+            ActionSymbol(name: "list.bullet", title: "List"),
+            ActionSymbol(name: "text.alignleft", title: "Text"),
+            ActionSymbol(name: "text.quote", title: "Quote"),
+            ActionSymbol(name: "character.book.closed.fill", title: "Dictionary"),
+            ActionSymbol(name: "graduationcap.fill", title: "Learn"),
+            ActionSymbol(name: "lightbulb.fill", title: "Idea"),
+        ]),
+        ActionSymbolCategory(title: "Audio & video", symbols: [
+            ActionSymbol(name: "waveform", title: "Audio"),
+            ActionSymbol(name: "mic.fill", title: "Record"),
+            ActionSymbol(name: "headphones", title: "Listen"),
+            ActionSymbol(name: "music.note", title: "Music"),
+            ActionSymbol(name: "speaker.wave.2.fill", title: "Speaker"),
+            ActionSymbol(name: "play.fill", title: "Play"),
+            ActionSymbol(name: "film.fill", title: "Movie"),
+            ActionSymbol(name: "video.fill", title: "Video"),
+            ActionSymbol(name: "captions.bubble.fill", title: "Captions"),
+            ActionSymbol(name: "text.bubble.fill", title: "Transcript"),
+            ActionSymbol(name: "music.note.list", title: "Playlist"),
+            ActionSymbol(name: "radio.fill", title: "Radio"),
+            ActionSymbol(name: "antenna.radiowaves.left.and.right", title: "Broadcast"),
+            ActionSymbol(name: "ear.fill", title: "Hearing"),
+            ActionSymbol(name: "pianokeys", title: "Instrument"),
+            ActionSymbol(name: "metronome.fill", title: "Tempo"),
+        ]),
+        ActionSymbolCategory(title: "Images & design", symbols: [
+            ActionSymbol(name: "photo.fill", title: "Image"),
+            ActionSymbol(name: "photo.on.rectangle.angled", title: "Gallery"),
+            ActionSymbol(name: "camera.fill", title: "Camera"),
+            ActionSymbol(name: "camera.viewfinder", title: "Capture"),
+            ActionSymbol(name: "crop", title: "Crop"),
+            ActionSymbol(name: "paintpalette.fill", title: "Palette"),
+            ActionSymbol(name: "paintbrush.fill", title: "Paint"),
+            ActionSymbol(name: "pencil.tip", title: "Draw"),
+            ActionSymbol(name: "eyedropper.halffull", title: "Color"),
+            ActionSymbol(name: "square.on.circle", title: "Shapes"),
+            ActionSymbol(name: "scribble.variable", title: "Sketch"),
+            ActionSymbol(name: "viewfinder", title: "Scan"),
+            ActionSymbol(name: "slider.horizontal.3", title: "Adjust"),
+            ActionSymbol(name: "rectangle.stack.fill", title: "Layers"),
+            ActionSymbol(name: "cube.fill", title: "3D"),
+            ActionSymbol(name: "scissors", title: "Cut"),
+        ]),
+        ActionSymbolCategory(title: "Files & work", symbols: [
+            ActionSymbol(name: "doc.fill", title: "File"),
+            ActionSymbol(name: "doc.richtext", title: "Document"),
+            ActionSymbol(name: "doc.zipper", title: "ZIP archive"),
+            ActionSymbol(name: "tablecells.fill", title: "Spreadsheet"),
+            ActionSymbol(name: "chart.bar.fill", title: "Chart"),
+            ActionSymbol(name: "chart.pie.fill", title: "Analysis"),
+            ActionSymbol(name: "rectangle.on.rectangle", title: "Slides"),
+            ActionSymbol(name: "calendar", title: "Calendar"),
+            ActionSymbol(name: "checklist", title: "Tasks"),
+            ActionSymbol(name: "checkmark.circle.fill", title: "Done"),
+            ActionSymbol(name: "clock.fill", title: "Later"),
+            ActionSymbol(name: "timer", title: "Timer"),
+            ActionSymbol(name: "briefcase.fill", title: "Work"),
+            ActionSymbol(name: "building.2.fill", title: "Company"),
+            ActionSymbol(name: "signature", title: "Sign"),
+            ActionSymbol(name: "printer.fill", title: "Print"),
+        ]),
+        ActionSymbolCategory(title: "Messages & people", symbols: [
+            ActionSymbol(name: "bubble.left.and.bubble.right.fill", title: "Chat"),
+            ActionSymbol(name: "envelope.fill", title: "Email"),
+            ActionSymbol(name: "at", title: "Mention"),
+            ActionSymbol(name: "bell.fill", title: "Notification"),
+            ActionSymbol(name: "person.fill", title: "Person"),
+            ActionSymbol(name: "person.2.fill", title: "Team"),
+            ActionSymbol(name: "person.crop.circle.fill", title: "Profile"),
+            ActionSymbol(name: "phone.fill", title: "Call"),
+            ActionSymbol(name: "megaphone.fill", title: "Announce"),
+            ActionSymbol(name: "hand.thumbsup.fill", title: "Like"),
+            ActionSymbol(name: "heart.fill", title: "Favorite"),
+            ActionSymbol(name: "star.fill", title: "Star"),
+            ActionSymbol(name: "gift.fill", title: "Gift"),
+            ActionSymbol(name: "flag.fill", title: "Flag"),
+            ActionSymbol(name: "questionmark.circle.fill", title: "Help"),
+            ActionSymbol(name: "info.circle.fill", title: "Information"),
+        ]),
+        ActionSymbolCategory(title: "Devices & security", symbols: [
+            ActionSymbol(name: "desktopcomputer", title: "Desktop"),
+            ActionSymbol(name: "laptopcomputer", title: "Laptop"),
+            ActionSymbol(name: "iphone", title: "Phone"),
+            ActionSymbol(name: "ipad", title: "Tablet"),
+            ActionSymbol(name: "server.rack", title: "Server"),
+            ActionSymbol(name: "display", title: "Display"),
+            ActionSymbol(name: "keyboard.fill", title: "Keyboard"),
+            ActionSymbol(name: "wifi", title: "Wi-Fi"),
+            ActionSymbol(name: "bolt.horizontal.fill", title: "Connect"),
+            ActionSymbol(name: "lock.fill", title: "Lock"),
+            ActionSymbol(name: "key.fill", title: "Key"),
+            ActionSymbol(name: "shield.fill", title: "Security"),
+            ActionSymbol(name: "checkmark.shield.fill", title: "Verified"),
+            ActionSymbol(name: "faceid", title: "Face ID"),
+            ActionSymbol(name: "qrcode", title: "QR code"),
+            ActionSymbol(name: "touchid", title: "Fingerprint"),
+        ]),
+        ActionSymbolCategory(title: "Life & places", symbols: [
+            ActionSymbol(name: "house.fill", title: "Home"),
+            ActionSymbol(name: "mappin.and.ellipse", title: "Place"),
+            ActionSymbol(name: "map.fill", title: "Map"),
+            ActionSymbol(name: "location.fill", title: "Location"),
+            ActionSymbol(name: "car.fill", title: "Car"),
+            ActionSymbol(name: "airplane", title: "Travel"),
+            ActionSymbol(name: "cart.fill", title: "Shopping"),
+            ActionSymbol(name: "creditcard.fill", title: "Payment"),
+            ActionSymbol(name: "dollarsign.circle.fill", title: "Money"),
+            ActionSymbol(name: "leaf.fill", title: "Nature"),
+            ActionSymbol(name: "sun.max.fill", title: "Day"),
+            ActionSymbol(name: "moon.fill", title: "Night"),
+            ActionSymbol(name: "flame.fill", title: "Fire"),
+            ActionSymbol(name: "pawprint.fill", title: "Pets"),
+            ActionSymbol(name: "fork.knife", title: "Food"),
+            ActionSymbol(name: "cup.and.saucer.fill", title: "Coffee"),
+        ]),
+    ]
+
+    static func matching(_ query: String) -> [ActionSymbolCategory] {
+        let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        return categories.compactMap { category in
+            let symbols = category.symbols.filter { symbol in
+                let keywords = "\(category.title) \(symbol.title) \(symbol.name)"
+                return terms.allSatisfy { keywords.localizedStandardContains($0) }
+            }
+            return symbols.isEmpty ? nil : ActionSymbolCategory(title: category.title, symbols: symbols)
+        }
+    }
+}
+
+private struct ActionSymbolGrid: View {
+    let symbols: [ActionSymbol]
+    let selectedName: String?
+    let onSelect: (String) -> Void
+    var body: some View {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 60))], spacing: 12) {
+        ForEach(symbols) { symbol in
+            Button { onSelect(symbol.name) } label: {
+                VStack(spacing: 6) {
+                    Image(systemName: symbol.name).font(.title2).frame(height: 28)
+                    Text(symbol.title).font(.caption2).lineLimit(2).multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, minHeight: 68)
+                .padding(.horizontal, 2)
+                .background(selectedName == symbol.name ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .topTrailing) {
+                    if selectedName == symbol.name {
+                        Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.tint)
+                    }
+                }
+            }.buttonStyle(.plain)
+                .accessibilityLabel("Use \(symbol.title) icon")
+                .accessibilityAddTraits(selectedName == symbol.name ? [.isSelected] : [])
+        }
+    }.padding(.vertical, 6)
+    }
+}
+
+private struct ActionIconPreview: View {
+    let capability: Capability
+    let selected: ActionIconOverride?
+    var body: some View {
+        HStack(spacing: 16) {
+            CapabilityIcon(icon: capability.manifest.icon, override: selected, size: 48)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(capability.manifest.title).font(.headline)
+                Text(selected?.usesServerArtwork != false ? "Using server icon" : "Using icon on this iPhone").font(.subheadline).foregroundStyle(.secondary)
+            }
+        }.padding(.vertical, 4)
+    }
+}
+
+private struct ActionIconColorPicker: View {
+    let tint: ActionIconTint?
+    let onSelect: (ActionIconTint?) -> Void
+    var body: some View {
+        Section {
+            Button { onSelect(nil) } label: {
+                HStack {
+                    Text("Original / automatic")
+                    Spacer()
+                    if tint == nil { Image(systemName: "checkmark").accessibilityLabel("Selected") }
+                }
+            }
+            ColorPicker("Custom color", selection: Binding(
+                get: { tint?.color ?? .accentColor },
+                set: { onSelect(ActionIconTint(color: $0)) }
+            ), supportsOpacity: false)
+        } header: { Text("Icon color") }
+        footer: { Text("A custom color tints the icon in the app and share sheet. Original keeps artwork such as Pi in its supplied light and dark colors.") }
+    }
+}
+
+private struct ActionArtworkPicker: View {
+    let icon: ActionIcon?
+    let usesServerArtwork: Bool
+    let chooseImage: () -> Void
+    let useServer: () -> Void
+    var body: some View {
+    Section {
+        Button(action: chooseImage) { Label("Choose image…", systemImage: "photo") }
+        Button(action: useServer) {
+            HStack {
+                CapabilityIcon(icon: icon, size: 24)
+                Text("Use server icon")
+                Spacer()
+                if usesServerArtwork { Image(systemName: "checkmark").accessibilityLabel("Selected") }
+            }
+        }
+    } footer: { Text("Your choice appears in the app and share sheet on this iPhone. Use the server icon to follow updates from the action’s provider.") }
+    }
+}
+
 private struct ActionAppearanceView: View {
     @EnvironmentObject private var model: AppModel
     let capability: Capability
     var server: Connection? = nil
     @State private var choosingImage = false
     @State private var error: String?
-    private let symbols = ["bolt.fill", "paperplane.fill", "tray.and.arrow.down.fill", "link", "text.bubble.fill", "waveform", "photo.fill", "film.fill", "doc.fill", "wand.and.stars", "terminal.fill", "gearshape.fill"]
+    @State private var iconSearch = ""
+    private var categories: [ActionSymbolCategory] { ActionSymbolCatalog.matching(iconSearch) }
     private var selected: ActionIconOverride? {
         guard let connection = server ?? model.connection else { return nil }
         return ShareActionPreferences.icon(for: capability.id, deviceID: connection.deviceID)
     }
     private func setIcon(_ icon: ActionIconOverride?) {
+        saveAppearance(ActionIconOverride(systemName: icon?.systemName, image: icon?.image, tint: selected?.tint))
+    }
+    private func saveAppearance(_ value: ActionIconOverride) {
+        let icon: ActionIconOverride? = value.usesServerArtwork && value.tint == nil ? nil : value
         guard let connection = server ?? model.connection else { return }
         ShareActionPreferences.saveIcon(icon, for: capability.id, deviceID: connection.deviceID)
         if connection.deviceID == model.connection?.deviceID { model.setIcon(icon, for: capability.id) }
@@ -984,31 +1262,25 @@ private struct ActionAppearanceView: View {
     }
     var body: some View {
         Form {
-            Section {
-                HStack(spacing: 16) {
-                    CapabilityIcon(icon: capability.manifest.icon, override: selected, size: 48)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(capability.manifest.title).font(.headline)
-                        Text(selected == nil ? "Using server icon" : "Using icon on this iPhone").font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }.padding(.vertical, 4)
+            Section { ActionIconPreview(capability: capability, selected: selected) }
+            ActionArtworkPicker(icon: capability.manifest.icon, usesServerArtwork: selected?.usesServerArtwork != false,
+                                chooseImage: { choosingImage = true }, useServer: { setIcon(nil) })
+            ActionIconColorPicker(tint: selected?.tint) { color in
+                var appearance = selected ?? ActionIconOverride()
+                appearance.tint = color
+                saveAppearance(appearance)
             }
-            Section("Symbols") {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
-                    ForEach(symbols, id: \.self) { symbol in
-                        Button { setIcon(.system(symbol)) } label: {
-                            Image(systemName: symbol).font(.title2).frame(width: 44, height: 44)
-                                .background(selected?.systemName == symbol ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain).accessibilityLabel("Use \(symbol) icon")
-                    }
-                }.padding(.vertical, 6)
+            if categories.isEmpty {
+                ContentUnavailableView.search(text: iconSearch)
             }
-            Section {
-                Button { choosingImage = true } label: { Label("Choose image…", systemImage: "photo") }
-                if selected != nil { Button("Use server icon") { setIcon(nil) } }
-                if let error { Text(error).foregroundStyle(.red) }
-            } footer: { Text("This choice is stored only on this iPhone. The action’s server-provided icon remains unchanged.") }
+            ForEach(categories) { category in
+                Section(category.title) {
+                    ActionSymbolGrid(symbols: category.symbols, selectedName: selected?.systemName) { setIcon(.system($0)) }
+                }
+            }
+            if let error { Section { Text(error).foregroundStyle(.red) } }
         }.navigationTitle("Action icon").navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $iconSearch, prompt: "Search icons, e.g. audio, code, save")
             .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in
                 Task { await importImage(result) }
             }
